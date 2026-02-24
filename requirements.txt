@@ -1,5 +1,16 @@
-argon2-cffi==25.1.0
-argon2-cffi-bindings==25.1.0
-cffi==2.0.0
-cryptography==46.0.5
-pycparser==3.0
+# ============================================
+# Password-Based File Encryption Tool
+# ============================================
+
+# Minimum Python version required
+# Python >= 3.10 recommended
+# (Tested on Python 3.10 / 3.11 / 3.12)
+
+# Cryptographic library for:
+# - AES-CTR
+# - AES-GCM
+# - ChaCha20-Poly1305
+cryptography>=42.0.0
+
+# Key Derivation Function (Argon2 - memory hard)
+argon2-cffi>=23.0.0
