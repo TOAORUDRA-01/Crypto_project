@@ -1,0 +1,23 @@
+Setup Development Environment
+Install Python (if not installed)
+
+Check:
+
+python --version
+
+Use Python 3.10+
+
+Create Project Folder
+mkdir crypto_project
+cd crypto_project
+Create Virtual Environment (important)
+python -m venv venv
+
+Activate:
+
+Windows
+venv\Scripts\activate
+Linux/Mac
+source venv/bin/activate
+
+pip install -r requirements.txt

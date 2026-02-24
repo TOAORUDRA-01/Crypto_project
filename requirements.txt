@@ -1,0 +1,5 @@
+argon2-cffi==25.1.0
+argon2-cffi-bindings==25.1.0
+cffi==2.0.0
+cryptography==46.0.5
+pycparser==3.0
