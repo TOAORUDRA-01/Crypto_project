@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Encryptix</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f0f4f8; --card: #fff; --primary: #2563eb; --primary-hover: #1d4ed8;
+    --primary-light: #eff6ff; --border: #e2e8f0; --text: #1e293b; --muted: #64748b;
+    --success: #16a34a; --danger: #dc2626; --input-bg: #f8fafc;
+    --shadow: 0 8px 32px rgba(0,0,0,0.1);
+    --dec: #7c3aed; --dec-hover: #6d28d9; --dec-light: #f5f3ff;
+  }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); min-height: 100vh; color: var(--text); }
+
+  .topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 32px; background: #fff; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
+  .topbar-logo { font-family: 'DM Mono', monospace; font-weight: 500; font-size: 15px; color: var(--primary); }
+  .topbar-actions { display: flex; gap: 10px; align-items: center; }
+
+  .btn { padding: 8px 18px; border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; border: none; }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-ghost:hover { background: var(--bg); }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-dec { background: var(--dec); color: #fff; }
+  .btn-dec:hover { background: var(--dec-hover); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn-full { width: 100%; padding: 11px; font-size: 15px; font-weight: 600; border-radius: 9px; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .user-chip { display: flex; align-items: center; gap: 8px; padding: 5px 12px 5px 6px; background: var(--primary-light); border-radius: 99px; font-size: 13px; font-weight: 500; color: var(--primary); cursor: pointer; border: 1px solid #bfdbfe; transition: background 0.15s; }
+  .user-chip:hover { background: #dbeafe; }
+  .avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+
+  .page { display: flex; justify-content: center; padding: 48px 16px 80px; }
+
+  .flip-scene { width: 100%; max-width: 460px; perspective: 1200px; }
+  .flip-card { width: 100%; position: relative; transform-style: preserve-3d; transition: transform 0.65s cubic-bezier(0.45, 0.05, 0.55, 0.95); }
+  .flip-card.flipped { transform: rotateY(180deg); }
+
+  .card-face { width: 100%; background: var(--card); border-radius: 16px; box-shadow: var(--shadow); padding: 30px 32px 28px; display: flex; flex-direction: column; gap: 16px; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+  .card-front { position: relative; }
+  .card-back { position: absolute; top: 0; left: 0; transform: rotateY(180deg); }
+
+  .tab-switcher { display: flex; background: var(--bg); border-radius: 10px; padding: 4px; gap: 4px; }
+  .tab-btn { flex: 1; padding: 9px 0; border: none; border-radius: 7px; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; background: transparent; color: var(--muted); display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .tab-btn.enc-active { background: #fff; color: var(--primary); box-shadow: 0 1px 8px rgba(37,99,235,0.15); }
+  .tab-btn.dec-active { background: #fff; color: var(--dec); box-shadow: 0 1px 8px rgba(124,58,237,0.15); }
+  .lock-icon { width: 15px; height: 15px; flex-shrink: 0; overflow: visible; }
+
+  .card-title { font-size: 20px; font-weight: 700; text-align: center; letter-spacing: -0.4px; }
+  .card-title.dec { color: var(--dec); }
+
+  .mode-toggle { display: flex; background: var(--bg); border-radius: 9px; padding: 4px; gap: 4px; }
+  .mode-toggle button { flex: 1; padding: 8px 0; border: none; border-radius: 6px; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.18s; background: transparent; color: var(--muted); }
+  .mode-toggle button.active { background: #fff; color: var(--primary); box-shadow: 0 1px 6px rgba(0,0,0,0.1); }
+  .mode-toggle.dec-mode button.active { color: var(--dec); }
+
+  .drop-area { border: 2px dashed #cbd5e1; border-radius: 10px; padding: 24px 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--input-bg); }
+  .drop-area:hover, .drop-area.dragover { border-color: var(--primary); background: var(--primary-light); }
+  .drop-area.dec-drop:hover, .drop-area.dec-drop.dragover { border-color: var(--dec); background: var(--dec-light); }
+  .drop-icon { font-size: 28px; margin-bottom: 6px; display: block; }
+  .drop-area p { font-size: 14px; color: var(--muted); font-weight: 500; }
+  .file-name { font-size: 13px; color: var(--muted); font-family: 'DM Mono', monospace; text-align: center; min-height: 18px; }
+
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  label { font-size: 13px; font-weight: 500; color: var(--muted); }
+  select, input[type="password"], input[type="text"], input[type="email"] { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 14px; color: var(--text); background: var(--input-bg); outline: none; transition: border-color 0.15s, box-shadow 0.15s; -webkit-appearance: none; appearance: none; }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2364748b' d='M1 1l5 5 5-5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; }
+  select:focus, input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
+  .dec-focus:focus { border-color: var(--dec) !important; box-shadow: 0 0 0 3px rgba(124,58,237,0.12) !important; }
+
+  .status-line { text-align: center; font-size: 13px; color: var(--muted); font-family: 'DM Mono', monospace; min-height: 18px; }
+  .status-line.ok { color: var(--success); }
+  .status-line.err { color: var(--danger); }
+
+  .history-box { display: none; flex-direction: column; gap: 10px; }
+  .history-header { display: flex; justify-content: space-between; align-items: center; }
+  .history-header b { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .history-list { display: flex; flex-direction: column; gap: 6px; }
+  .history-item { background: var(--input-bg); border: 1px solid var(--border); border-radius: 8px; padding: 9px 13px; display: flex; justify-content: space-between; align-items: center; }
+  .history-item-name { font-size: 13px; font-family: 'DM Mono', monospace; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 195px; }
+  .history-item-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .history-item-dl { font-size: 12px; color: var(--primary); cursor: pointer; font-weight: 500; white-space: nowrap; margin-left: 10px; background: none; border: none; font-family: inherit; }
+  .history-item-dl:hover { text-decoration: underline; }
+  .history-item-dl.dec-dl { color: var(--dec); }
+  .history-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 12px 0; }
+
+  .overlay-bg { position: fixed; inset: 0; background: rgba(15,23,42,0.4); display: none; justify-content: center; align-items: center; z-index: 100; backdrop-filter: blur(3px); }
+  .overlay-bg.visible { display: flex; }
+
+  .modal { background: #fff; border-radius: 16px; padding: 32px 28px 28px; width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,0.18); position: relative; display: flex; flex-direction: column; gap: 16px; animation: popIn 0.25s ease; }
+  @keyframes popIn { from { opacity:0; transform:scale(0.95) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
+  .modal h4 { font-size: 18px; font-weight: 700; }
+  .modal > p { font-size: 13px; color: var(--muted); margin-top: -8px; }
+  .btn-close { position: absolute; top: 14px; right: 16px; background: none; border: none; font-size: 18px; color: var(--muted); cursor: pointer; }
+  .btn-close:hover { color: var(--text); }
+  .modal-switch { font-size: 13px; text-align: center; color: var(--muted); }
+  .modal-switch span { color: var(--primary); cursor: pointer; font-weight: 500; }
+  .modal-switch span:hover { text-decoration: underline; }
+  .modal-error { font-size: 13px; color: var(--danger); text-align: center; min-height: 16px; }
+
+  .profile-modal { background: #fff; border-radius: 16px; width: 400px; max-height: 80vh; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.18); position: relative; animation: popIn 0.25s ease; display: flex; flex-direction: column; }
+  .profile-header { background: linear-gradient(135deg, var(--primary) 0%, #1e40af 100%); padding: 28px 28px 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .profile-avatar { width: 56px; height: 56px; border-radius: 50%; background: rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; color: #fff; border: 2px solid rgba(255,255,255,0.4); }
+  .profile-name { font-size: 17px; font-weight: 700; color: #fff; }
+  .profile-email { font-size: 13px; color: rgba(255,255,255,0.75); }
+  .profile-body { padding: 20px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+  .profile-stat { display: flex; justify-content: space-between; background: var(--input-bg); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; }
+  .profile-stat-label { font-size: 13px; color: var(--muted); }
+  .profile-stat-val { font-size: 13px; font-weight: 600; color: var(--text); font-family: 'DM Mono', monospace; }
+  .profile-close { position: absolute; top: 12px; right: 16px; background: rgba(255,255,255,0.2); border: none; border-radius: 6px; padding: 4px 8px; color: #fff; font-size: 16px; cursor: pointer; }
+
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(8px); background: #1e293b; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 500; opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 999; white-space: nowrap; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .hint-badge { font-size: 12px; color: var(--muted); background: var(--dec-light); border: 1px solid #ddd6fe; border-radius: 7px; padding: 7px 12px; text-align: center; }
+
+  .pass-wrap { position: relative; }
+  .pass-wrap input { padding-right: 42px; width: 100%; }
+  .pass-toggle { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; padding: 2px; color: var(--muted); line-height: 1; transition: color 0.15s; display: flex; align-items: center; }
+  .pass-toggle:hover { color: var(--text); }
+
+  .progress-wrap { display: none; flex-direction: column; gap: 6px; }
+  .progress-wrap.visible { display: flex; }
+  .progress-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-family: 'DM Mono', monospace; }
+  .progress-track { width: 100%; height: 6px; background: var(--border); border-radius: 99px; overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; border-radius: 99px; transition: width 0.2s ease; background: linear-gradient(90deg, var(--primary), #60a5fa); }
+  .progress-fill.dec-fill { background: linear-gradient(90deg, var(--dec), #a78bfa); }
+  .progress-fill.done { background: linear-gradient(90deg, var(--success), #4ade80); transition: width 0.15s ease; }
+
+  .online-files-box { display: flex; flex-direction: column; gap: 8px; }
+  .online-files-label { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+  .online-file-item { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border-radius: 9px; cursor: pointer; border: 2px solid var(--border); background: var(--input-bg); transition: border-color 0.15s, background 0.15s; }
+  .online-file-item:hover { border-color: #c4b5fd; background: var(--dec-light); }
+  .online-file-item.selected { border-color: var(--dec); background: var(--dec-light); }
+  .online-file-icon { font-size: 20px; flex-shrink: 0; }
+  .online-file-info { min-width: 0; flex: 1; }
+  .online-file-name { font-size: 13px; font-family: 'DM Mono', monospace; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .online-file-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .online-file-check { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #c4b5fd; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+  .online-file-item.selected .online-file-check { background: var(--dec); border-color: var(--dec); color: #fff; font-size: 11px; }
+  .online-login-prompt { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px 0; }
+  .online-login-prompt p { font-size: 13px; color: var(--muted); text-align: center; }
+  .online-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 18px 0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar-logo"> Encryptix</span>
+  <div class="topbar-actions" id="topbarActions">
+    <button class="btn btn-ghost" onclick="showAuth('login')">Login</button>
+    <button class="btn btn-primary" onclick="showAuth('signup')">Sign Up</button>
+  </div>
+</div>
+
+<div class="page">
+  <div class="flip-scene">
+    <div class="flip-card" id="flipCard">
+
+      <div class="card-face card-front">
+        <div class="tab-switcher">
+          <button class="tab-btn enc-active" id="tabEnc" onclick="switchTab('enc')">
+            <svg class="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path class="shackle" d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Encryption
+          </button>
+          <button class="tab-btn" id="tabDec" onclick="switchTab('dec')">
+            <svg class="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path class="shackle" d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Decryption
+          </button>
+        </div>
+
+        <h2 class="card-title">Encrypt File</h2>
+
+        <div class="mode-toggle" id="encModeToggle">
+          <button id="encDesktopBtn" class="active" onclick="setMode('enc','desktop')">Desktop</button>
+          <button id="encOnlineBtn" onclick="setMode('enc','online')">Online</button>
+        </div>
+
+        <div class="drop-area" id="encDrop">
+          <span class="drop-icon">📂</span>
+          <p>Drag & Drop File or Click</p>
+          <input type="file" id="encFileInput">
+        </div>
+        <p class="file-name" id="encFileName">No file selected</p>
+
+        <div class="field">
+          <label>Algorithm</label>
+          <select id="algorithm">
+            <option value="AES-256-GCM">AES-256 GCM</option>
+            <option value="AES-128-CTR">AES-128 CTR</option>
+            <option value="ChaCha20-Poly1305">ChaCha20-Poly1305</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Password</label>
+          <div class="pass-wrap">
+            <input type="password" id="encPassword" placeholder="Enter Password">
+            <button class="pass-toggle" type="button" onclick="togglePass('encPassword', this)" title="Show/hide password"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-full" id="encryptBtn" onclick="encryptFile()">🔒 Encrypt File</button>
+
+        <div class="progress-wrap" id="encProgressWrap">
+          <div class="progress-label">
+            <span id="encProgressLabel">Encrypting…</span>
+            <span id="encProgressPct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="encProgressFill"></div>
+          </div>
+        </div>
+
+        <div class="status-line" id="encStatus">No file selected</div>
+
+        <div class="history-box" id="encHistoryBox">
+          <div class="history-header">
+            <b>Encryption History</b>
+            <span style="font-size:12px;color:var(--muted)" id="encHistCount"></span>
+          </div>
+          <div class="history-list" id="encHistoryList">
+            <p class="history-empty">Login to view history</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-face card-back">
+        <div class="tab-switcher">
+          <button class="tab-btn" id="tabEncBack" onclick="switchTab('enc')">
+            <svg class="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path class="shackle" d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Encryption
+          </button>
+          <button class="tab-btn dec-active" id="tabDecBack" onclick="switchTab('dec')">
+            <svg class="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path class="shackle" d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Decryption
+          </button>
+        </div>
+
+        <h2 class="card-title dec">Decrypt File</h2>
+
+        <div class="mode-toggle dec-mode" id="decModeToggle">
+          <button id="decDesktopBtn" class="active" onclick="setMode('dec','desktop')">Desktop</button>
+          <button id="decOnlineBtn" onclick="setMode('dec','online')">Online</button>
+        </div>
+
+        <div id="decDesktopPanel">
+          <div class="drop-area dec-drop" id="decDrop" style="margin-bottom:10px">
+            <span class="drop-icon">🔓</span>
+            <p>Drop your .enc file or Click</p>
+            <input type="file" id="decFileInput" accept=".enc">
+          </div>
+          <p class="file-name" id="decFileName">No file selected</p>
+          <div class="hint-badge" style="margin-top:8px">Only .enc files encrypted with Encryptix are supported</div>
+        </div>
+
+        <div id="decOnlinePanel" style="display:none">
+          <div class="online-files-box" id="onlineFilesBox"></div>
+        </div>
+
+        <div class="field" id="decPassField" style="display:none">
+          <label>Password</label>
+          <div class="pass-wrap">
+            <input type="password" id="decPassword" class="dec-focus" placeholder="Enter password">
+            <button class="pass-toggle" type="button" onclick="togglePass('decPassword', this)" title="Show/hide password"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+        </div>
+
+        <button class="btn btn-dec btn-full" id="decryptBtn" onclick="decryptFile()" style="display:none">🔓 Decrypt File</button>
+
+        <div class="progress-wrap" id="decProgressWrap">
+          <div class="progress-label">
+            <span id="decProgressLabel">Decrypting…</span>
+            <span id="decProgressPct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill dec-fill" id="decProgressFill"></div>
+          </div>
+        </div>
+
+        <div class="status-line" id="decStatus">No file selected</div>
+
+        <div class="history-box" id="decHistoryBox">
+          <div class="history-header">
+            <b>Decryption History</b>
+            <span style="font-size:12px;color:var(--muted)" id="decHistCount"></span>
+          </div>
+          <div class="history-list" id="decHistoryList">
+            <p class="history-empty">Login to view history</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="overlay-bg" id="authOverlay">
+  <div class="modal">
+    <button class="btn-close" onclick="closeAuth()">✕</button>
+    <h4 id="authTitle">Welcome back</h4>
+    <p id="authSub">Login to your account to continue.</p>
+    <div class="field" id="nameField" style="display:none">
+      <label>Full Name</label>
+      <input type="text" id="authName" placeholder="Your name">
+    </div>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="authEmail" placeholder="you@example.com">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <div class="pass-wrap">
+        <input type="password" id="authPass" placeholder="Password (min 6 chars)">
+        <button class="pass-toggle" type="button" onclick="togglePass('authPass', this)" title="Show/hide password"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
+    </div>
+    <div class="modal-error" id="authError"></div>
+    <button class="btn btn-primary btn-full" onclick="submitAuth()" id="authSubmitBtn">Login</button>
+    <div class="modal-switch" id="authSwitch">
+      Don't have an account? <span onclick="switchAuthMode()">Sign Up</span>
+    </div>
+  </div>
+</div>
+
+<div class="overlay-bg" id="profileOverlay">
+  <div class="profile-modal">
+    <button class="profile-close" onclick="closeProfile()">✕</button>
+    <div class="profile-header">
+      <div class="profile-avatar" id="profileAvatar">U</div>
+      <div class="profile-name" id="profileName">User</div>
+      <div class="profile-email" id="profileEmailDisp"></div>
+    </div>
+    <div class="profile-body">
+      <div class="profile-stat">
+        <span class="profile-stat-label">Member since</span>
+        <span class="profile-stat-val" id="profileSince">—</span>
+      </div>
+      <div class="profile-stat">
+        <span class="profile-stat-label">Files encrypted</span>
+        <span class="profile-stat-val" id="profileEncCount">0</span>
+      </div>
+      <div class="profile-stat">
+        <span class="profile-stat-label">Files decrypted</span>
+        <span class="profile-stat-val" id="profileDecCount">0</span>
+      </div>
+      <div class="profile-stat">
+        <span class="profile-stat-label">Preferred algorithm</span>
+        <span class="profile-stat-val" id="profileAlgo">AES-256-GCM</span>
+      </div>
+      <button class="btn btn-danger btn-full" onclick="logout()" style="margin-top:6px">Logout</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const DB = { users: {}, sessions: {} };
+
+function hashPass(p) {
+  let h = 5381;
+  for (let i = 0; i < p.length; i++) h = ((h << 5) + h) ^ p.charCodeAt(i);
+  return (h >>> 0).toString(36);
+}
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+
+let session = null;
+function currentUser() { return session ? DB.users[session.email] : null; }
+
+let activeTab = 'enc';
+
+function shacklePath(openAmount) {
+  const topY   = 7 - openAmount * 5;
+  const rightY = 11 - openAmount * 9;
+  return `M7 11V${topY.toFixed(1)}a5 5 0 0 1 10 0v${Math.max(0, rightY).toFixed(1)}`;
+}
+
+function animateShackles(toOpen) {
+  const shackles = document.querySelectorAll('.shackle');
+  const duration = 420;
+  const start = performance.now();
+  function easeInOut(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
+  function frame(now) {
+    let raw = Math.min((now - start) / duration, 1);
+    const amount = toOpen ? easeInOut(raw) : 1 - easeInOut(raw);
+    const d = shacklePath(amount);
+    shackles.forEach(s => s.setAttribute('d', d));
+    if (raw < 1) requestAnimationFrame(frame);
+    else shackles.forEach(s => s.setAttribute('d', shacklePath(toOpen ? 1 : 0)));
+  }
+  requestAnimationFrame(frame);
+}
+
+function switchTab(tab) {
+  if (activeTab === tab) return;
+  activeTab = tab;
+  document.getElementById('flipCard').classList.toggle('flipped', tab === 'dec');
+  animateShackles(tab === 'dec');
+  setTimeout(syncHeight, 680);
+}
+
+function syncHeight() {
+  const front = document.querySelector('.card-front');
+  const back  = document.querySelector('.card-back');
+  const card  = document.getElementById('flipCard');
+  card.style.height = Math.max(front.scrollHeight, back.scrollHeight) + 'px';
+}
+
+window.addEventListener('load', () => {
+  syncHeight();
+  showDecControls(true);
+  setStatus('dec', 'No file selected', '');
+  document.querySelectorAll('.shackle').forEach(s => s.setAttribute('d', shacklePath(0)));
+  document.querySelector('#tabDecBack .shackle').setAttribute('d', shacklePath(1));
+});
+window.addEventListener('resize', syncHeight);
+
+let authMode = 'login';
+
+function showAuth(mode) {
+  authMode = mode;
+  ['authError','authName','authEmail','authPass'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el.tagName === 'INPUT') el.value = ''; else el.textContent = '';
+  });
+  const s = mode === 'signup';
+  document.getElementById('authTitle').textContent     = s ? 'Create account' : 'Welcome back';
+  document.getElementById('authSub').textContent       = s ? 'Sign up to save your history.' : 'Login to your account to continue.';
+  document.getElementById('nameField').style.display   = s ? 'flex' : 'none';
+  document.getElementById('authSubmitBtn').textContent = s ? 'Sign Up' : 'Login';
+  document.getElementById('authSwitch').innerHTML      = s
+    ? 'Already have an account? <span onclick="switchAuthMode()">Login</span>'
+    : "Don't have an account? <span onclick=\"switchAuthMode()\">Sign Up</span>";
+  document.getElementById('authOverlay').classList.add('visible');
+  setTimeout(() => document.getElementById('authEmail').focus(), 50);
+}
+
+function switchAuthMode() { showAuth(authMode === 'login' ? 'signup' : 'login'); }
+function closeAuth() { document.getElementById('authOverlay').classList.remove('visible'); }
+
+function submitAuth() {
+  const email = document.getElementById('authEmail').value.trim().toLowerCase();
+  const pass  = document.getElementById('authPass').value;
+  const name  = document.getElementById('authName').value.trim();
+  const errEl = document.getElementById('authError');
+  errEl.textContent = '';
+
+  if (!email || !pass) { errEl.textContent = 'Please fill in all fields.'; return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'Enter a valid email.'; return; }
+  if (pass.length < 6) { errEl.textContent = 'Password must be at least 6 chars.'; return; }
+
+  const hash = hashPass(pass);
+  if (authMode === 'signup') {
+    if (!name) { errEl.textContent = 'Please enter your name.'; return; }
+    if (DB.users[email]) { errEl.textContent = 'Account already exists. Login instead.'; return; }
+    DB.users[email] = { name, passwordHash: hash, createdAt: new Date().toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }), encHistory: [], decHistory: [] };
+    toast(`Welcome, ${name}!`);
+  } else {
+    const u = DB.users[email];
+    if (!u) { errEl.textContent = 'No account found. Sign up first.'; return; }
+    if (u.passwordHash !== hash) { errEl.textContent = 'Incorrect password.'; return; }
+    toast(`Welcome back, ${u.name}!`);
+  }
+
+  const sid = genId();
+  DB.sessions[sid] = email;
+  session = { sid, email };
+  closeAuth();
+  onLogin();
+}
+
+function logout() {
+  if (session) delete DB.sessions[session.sid];
+  session = null;
+  closeProfile();
+  onLogout();
+  toast('Logged out successfully.');
+}
+
+function onLogin() {
+  const u = currentUser();
+  const init = u.name.charAt(0).toUpperCase();
+  document.getElementById('topbarActions').innerHTML = `
+    <div class="user-chip" onclick="openProfile()">
+      <div class="avatar">${init}</div>
+      ${u.name.split(' ')[0]}
+    </div>`;
+  refreshHistories();
+  if (document.getElementById('decOnlineBtn').classList.contains('active')) renderOnlineDecFiles();
+  syncHeight();
+}
+
+function onLogout() {
+  document.getElementById('topbarActions').innerHTML = `
+    <button class="btn btn-ghost" onclick="showAuth('login')">Login</button>
+    <button class="btn btn-primary" onclick="showAuth('signup')">Sign Up</button>`;
+  ['enc','dec'].forEach(t => {
+    document.getElementById(t+'HistoryBox').style.display = 'none';
+    setMode(t, document.getElementById(t+'OnlineBtn').classList.contains('active') ? 'online' : 'desktop');
+  });
+  syncHeight();
+}
+
+function openProfile() {
+  const u = currentUser(); if (!u) return;
+  document.getElementById('profileAvatar').textContent    = u.name.charAt(0).toUpperCase();
+  document.getElementById('profileName').textContent      = u.name;
+  document.getElementById('profileEmailDisp').textContent = session.email;
+  document.getElementById('profileSince').textContent     = u.createdAt;
+  document.getElementById('profileEncCount').textContent  = u.encHistory.length;
+  document.getElementById('profileDecCount').textContent  = u.decHistory.length;
+  const algoCounts = {};
+  u.encHistory.forEach(h => { algoCounts[h.algo] = (algoCounts[h.algo]||0)+1; });
+  const top = Object.entries(algoCounts).sort((a,b)=>b[1]-a[1])[0];
+  document.getElementById('profileAlgo').textContent = top ? top[0] : 'AES-256-GCM';
+  document.getElementById('profileOverlay').classList.add('visible');
+}
+function closeProfile() { document.getElementById('profileOverlay').classList.remove('visible'); }
+
+function setMode(side, mode) {
+  document.getElementById(side+'DesktopBtn').classList.toggle('active', mode === 'desktop');
+  document.getElementById(side+'OnlineBtn').classList.toggle('active', mode === 'online');
+
+  if (side === 'dec') {
+    document.getElementById('decDesktopPanel').style.display = mode === 'desktop' ? 'block' : 'none';
+    document.getElementById('decOnlinePanel').style.display  = mode === 'online'  ? 'block' : 'none';
+    if (mode === 'online') {
+      decFile = null;
+      selectedOnlineEncId = null;
+      showDecControls(false);
+      setStatus('dec', '', '');
+      renderOnlineDecFiles();
+      document.getElementById('decHistoryBox').style.display = 'flex';
+      renderHistory('dec');
+    } else {
+      selectedOnlineEncId = null;
+      showDecControls(true);
+      setStatus('dec', 'No file selected', '');
+      document.getElementById('decHistoryBox').style.display = 'none';
+    }
+  } else {
+    const hBox = document.getElementById(side+'HistoryBox');
+    if (mode === 'online') { hBox.style.display = 'flex'; renderHistory(side); }
+    else hBox.style.display = 'none';
+  }
+  syncHeight();
+}
+
+function showDecControls(show) {
+  document.getElementById('decPassField').style.display = show ? 'flex' : 'none';
+  document.getElementById('decryptBtn').style.display   = show ? 'block' : 'none';
+  if (!show) document.getElementById('decPassword').value = '';
+}
+
+let selectedOnlineEncId = null;
+
+function renderOnlineDecFiles() {
+  const box = document.getElementById('onlineFilesBox');
+  const u   = currentUser();
+  if (!u) {
+    box.innerHTML = `<div class="online-login-prompt"><p>Login to access your saved encrypted files</p><button class="btn btn-dec" onclick="showAuth('login')">Login</button></div>`;
+    showDecControls(false);
+    return;
+  }
+  if (!u.encHistory.length) {
+    box.innerHTML = `<p class="online-empty">No encrypted files yet.<br>Encrypt a file in Online mode first.</p>`;
+    showDecControls(false);
+    return;
+  }
+  box.innerHTML = `<div class="online-files-label">Your encrypted files</div>` +
+    u.encHistory.map(h => `
+      <div class="online-file-item ${selectedOnlineEncId === h.id ? 'selected' : ''}" onclick="selectOnlineFile('${h.id}')">
+        <span class="online-file-icon">🔒</span>
+        <div class="online-file-info">
+          <div class="online-file-name" title="${h.origName}">${h.origName}</div>
+          <div class="online-file-meta">${h.algo} · ${h.size} · ${h.date}</div>
+        </div>
+        <div class="online-file-check">${selectedOnlineEncId === h.id ? '✓' : ''}</div>
+      </div>`).join('');
+}
+
+function selectOnlineFile(id) {
+  selectedOnlineEncId = id;
+  renderOnlineDecFiles();
+  showDecControls(true);
+  setStatus('dec', '', '');
+  document.getElementById('decPassword').focus();
+  syncHeight();
+}
+
+let encFile = null, decFile = null;
+const encryptedBlobs = {}, decryptedBlobs = {};
+
+function wireDropZone(dropId, inputId, cb) {
+  const drop  = document.getElementById(dropId);
+  const input = document.getElementById(inputId);
+  drop.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => { if (input.files[0]) cb(input.files[0]); });
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('dragover'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('dragover'); if (e.dataTransfer.files[0]) cb(e.dataTransfer.files[0]); });
+}
+
+wireDropZone('encDrop', 'encFileInput', f => {
+  encFile = f;
+  document.getElementById('encFileName').textContent = `${f.name}  (${fmtSize(f.size)})`;
+  setStatus('enc', 'File ready', '');
+});
+
+wireDropZone('decDrop', 'decFileInput', f => {
+  decFile = f;
+  document.getElementById('decFileName').textContent = `${f.name}  (${fmtSize(f.size)})`;
+  setStatus('dec', 'File ready', '');
+});
+
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+
+const EYE_OPEN = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const EYE_SHUT = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
+function togglePass(inputId, btn) {
+  const input = document.getElementById(inputId);
+  const show  = input.type === 'password';
+  input.type  = show ? 'text' : 'password';
+  btn.innerHTML = show ? EYE_SHUT : EYE_OPEN;
+}
+
+function showProgress(side, label) {
+  const wrap = document.getElementById(side+'ProgressWrap');
+  const fill = document.getElementById(side+'ProgressFill');
+  wrap.classList.add('visible');
+  document.getElementById(side+'ProgressLabel').textContent = label;
+  document.getElementById(side+'ProgressPct').textContent   = '0%';
+  fill.style.width = '0%';
+  fill.classList.remove('done');
+}
+
+function setProgress(side, pct) {
+  document.getElementById(side+'ProgressFill').style.width = pct + '%';
+  document.getElementById(side+'ProgressPct').textContent  = pct + '%';
+}
+
+function finishProgress(side, label) {
+  const fill = document.getElementById(side+'ProgressFill');
+  fill.classList.add('done');
+  fill.style.width = '100%';
+  document.getElementById(side+'ProgressPct').textContent   = '100%';
+  document.getElementById(side+'ProgressLabel').textContent = label;
+  setTimeout(() => {
+    document.getElementById(side+'ProgressWrap').classList.remove('visible');
+    fill.classList.remove('done');
+    fill.style.width = '0%';
+    syncHeight();
+  }, 1800);
+}
+
+async function encryptFile() {
+  if (!encFile) { setStatus('enc','Please select a file first.','err'); return; }
+  const pass = document.getElementById('encPassword').value;
+  if (!pass) { setStatus('enc','Please enter a password.','err'); return; }
+
+  const algo = document.getElementById('algorithm').value;
+  const btn  = document.getElementById('encryptBtn');
+  btn.disabled = true;
+  setStatus('enc', '', '');
+  showProgress('enc', 'Reading file…');
+  setProgress('enc', 10);
+
+  try {
+    const buf = await encFile.arrayBuffer();
+    setProgress('enc', 30);
+    const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+    setProgress('enc', 50);
+    const salt   = crypto.getRandomValues(new Uint8Array(16));
+    const iv     = crypto.getRandomValues(new Uint8Array(12));
+    const keyLen = algo === 'AES-128-CTR' ? 128 : 256;
+    const key = await crypto.subtle.deriveKey(
+      { name:'PBKDF2', salt, iterations:100000, hash:'SHA-256' },
+      keyMaterial, { name:'AES-GCM', length:keyLen }, false, ['encrypt']
+    );
+    setProgress('enc', 70);
+    const cipher = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, buf);
+    setProgress('enc', 90);
+
+    const out = new Uint8Array(1 + 16 + 12 + cipher.byteLength);
+    out[0] = keyLen === 256 ? 1 : 0;
+    out.set(salt, 1); out.set(iv, 17); out.set(new Uint8Array(cipher), 29);
+
+    const blob    = new Blob([out], { type:'application/octet-stream' });
+    const encName = encFile.name + '.enc';
+    const id      = genId();
+    encryptedBlobs[id] = { blob, name:encName };
+
+    const u = currentUser();
+    if (u) {
+      u.encHistory.unshift({ id, name:encName, origName:encFile.name, algo, size:fmtSize(blob.size), date:fmtDate() });
+      if (document.getElementById('encOnlineBtn').classList.contains('active')) renderHistory('enc');
+      syncHeight();
+    }
+
+    triggerDownload(encryptedBlobs, id);
+    finishProgress('enc', '✓ Done!');
+    setStatus('enc', `✓ Encrypted & downloaded: ${encName}`, 'ok');
+    toast('File encrypted successfully!');
+  } catch(e) {
+    document.getElementById('encProgressWrap').classList.remove('visible');
+    setStatus('enc', 'Encryption failed. Try again.', 'err');
+    console.error(e);
+  }
+  btn.disabled = false;
+}
+
+async function decryptFile() {
+  const isOnline = document.getElementById('decOnlineBtn').classList.contains('active');
+  const pass = document.getElementById('decPassword').value;
+  if (!pass) { setStatus('dec','Please enter the password.','err'); return; }
+
+  let sourceBlob, sourceName;
+  if (isOnline) {
+    if (!selectedOnlineEncId) { setStatus('dec','Please select a file to decrypt.','err'); return; }
+    const stored = encryptedBlobs[selectedOnlineEncId];
+    if (!stored) { setStatus('dec','File data not found. Re-encrypt in this session.','err'); return; }
+    sourceBlob = stored.blob;
+    sourceName = stored.name;
+  } else {
+    if (!decFile) { setStatus('dec','Please select a .enc file first.','err'); return; }
+    if (!decFile.name.endsWith('.enc')) { setStatus('dec','File must be a .enc file encrypted by Encryptix.','err'); return; }
+    sourceBlob = decFile;
+    sourceName = decFile.name;
+  }
+
+  const btn = document.getElementById('decryptBtn');
+  btn.disabled = true;
+  setStatus('dec', '', '');
+  showProgress('dec', 'Reading file…');
+  setProgress('dec', 10);
+
+  try {
+    const buf  = await sourceBlob.arrayBuffer();
+    const data = new Uint8Array(buf);
+    setProgress('dec', 30);
+
+    if (data.length < 30) throw new Error('Invalid file');
+    const keyLen = data[0] === 1 ? 256 : 128;
+    const salt   = data.slice(1, 17);
+    const iv     = data.slice(17, 29);
+    const cipher = data.slice(29);
+
+    const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+    setProgress('dec', 55);
+    const key = await crypto.subtle.deriveKey(
+      { name:'PBKDF2', salt, iterations:100000, hash:'SHA-256' },
+      keyMaterial, { name:'AES-GCM', length:keyLen }, false, ['decrypt']
+    );
+    setProgress('dec', 75);
+    const plain = await crypto.subtle.decrypt({ name:'AES-GCM', iv }, key, cipher);
+    setProgress('dec', 90);
+
+    const origName = sourceName.replace(/\.enc$/, '');
+    const blob = new Blob([plain], { type:'application/octet-stream' });
+    const id   = genId();
+    decryptedBlobs[id] = { blob, name:origName };
+
+    const u = currentUser();
+    if (u) {
+      u.decHistory.unshift({ id, name:origName, encName:sourceName, size:fmtSize(blob.size), date:fmtDate() });
+      if (document.getElementById('decOnlineBtn').classList.contains('active')) renderHistory('dec');
+      syncHeight();
+    }
+
+    triggerDownload(decryptedBlobs, id);
+    finishProgress('dec', '✓ Done!');
+    setStatus('dec', `✓ Decrypted & downloaded: ${origName}`, 'ok');
+    toast('File decrypted successfully!');
+  } catch(e) {
+    document.getElementById('decProgressWrap').classList.remove('visible');
+    setStatus('dec', e.name === 'OperationError' ? 'Wrong password or corrupted file.' : 'Decryption failed. Is this a valid .enc file?', 'err');
+    console.error(e);
+  }
+  btn.disabled = false;
+}
+
+function triggerDownload(store, id) {
+  const item = store[id];
+  if (!item) { toast('File no longer available — please re-process.'); return; }
+  const url = URL.createObjectURL(item.blob);
+  const a = Object.assign(document.createElement('a'), { href:url, download:item.name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
+function refreshHistories() {
+  ['enc','dec'].forEach(side => {
+    if (document.getElementById(side+'OnlineBtn').classList.contains('active')) {
+      document.getElementById(side+'HistoryBox').style.display = 'flex';
+      renderHistory(side);
+    }
+  });
+}
+
+function renderHistory(side) {
+  const list  = document.getElementById(side+'HistoryList');
+  const count = document.getElementById(side+'HistCount');
+  const u     = currentUser();
+  if (!u) { list.innerHTML = '<p class="history-empty">Login to view history</p>'; count.textContent = ''; return; }
+  const hist = side === 'enc' ? u.encHistory : u.decHistory;
+  count.textContent = `${hist.length} file${hist.length !== 1 ? 's' : ''}`;
+  if (!hist.length) { list.innerHTML = `<p class="history-empty">No files ${side === 'enc' ? 'encrypted' : 'decrypted'} yet.</p>`; return; }
+  list.innerHTML = hist.map(h => `
+    <div class="history-item">
+      <div style="min-width:0">
+        <div class="history-item-name" title="${h.origName || h.name}">${h.origName || h.name}</div>
+        <div class="history-item-meta">${side === 'enc' ? h.algo + ' · ' : ''}${h.size} · ${h.date}</div>
+      </div>
+      <button class="history-item-dl ${side === 'dec' ? 'dec-dl' : ''}" onclick="triggerDownload(${side === 'enc' ? 'encryptedBlobs' : 'decryptedBlobs'}, '${h.id}')">⬇ Download</button>
+    </div>`).join('');
+}
+
+function setStatus(side, msg, cls) {
+  const el = document.getElementById(side+'Status');
+  el.textContent = msg; el.className = 'status-line ' + cls;
+}
+
+function fmtDate() {
+  return new Date().toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 3200);
+}
+
+document.getElementById('authOverlay').addEventListener('click', e => { if (e.target.id === 'authOverlay') closeAuth(); });
+document.getElementById('profileOverlay').addEventListener('click', e => { if (e.target.id === 'profileOverlay') closeProfile(); });
+['authName','authEmail','authPass'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
+});
+</script>
+</body>
+</html>
