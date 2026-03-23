@@ -19,6 +19,8 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from crypto.aes_gcm import encrypt_aes_gcm, ALGO_ID as AES_GCM_ALGO
+from crypto.aes_ctr import encrypt_aes_ctr, decrypt_aes_ctr
+from crypto.chacha20_poly1305 import encrypt_chacha20_poly1305, decrypt_chacha20_poly1305
 
 # Constants
 STORAGE_DIR = "storage"
@@ -109,14 +111,22 @@ def encrypt_file():
             algorithm_name = "AES-GCM-256"
             
         elif algo_choice == ALGO_AES_CTR:
-            # AES-CTR encryption (placeholder - implement if needed)
-            print("Error: AES-CTR not yet implemented")
-            return
-            
+            # AES-CTR-128 encryption
+            salt, nonce, ciphertext = encrypt_aes_ctr(data, password)
+
+            algo_id_bytes = bytes([ALGO_AES_CTR])
+            encrypted_data = algo_id_bytes + salt + nonce + ciphertext
+
+            algorithm_name = "AES-CTR-128"
+
         elif algo_choice == ALGO_CHACHA20:
-            # ChaCha20-Poly1305 encryption (placeholder - implement if needed)
-            print("Error: ChaCha20-Poly1305 not yet implemented")
-            return
+            # ChaCha20-Poly1305 encryption
+            salt, nonce, ciphertext = encrypt_chacha20_poly1305(data, password)
+
+            algo_id_bytes = bytes([ALGO_CHACHA20])
+            encrypted_data = algo_id_bytes + salt + nonce + ciphertext
+
+            algorithm_name = "ChaCha20-Poly1305"
         
         # Write encrypted file
         with open(output_path, 'wb') as f:
@@ -214,11 +224,11 @@ def decrypt_file():
             plaintext = decrypt_aes_gcm(ciphertext, password, salt, nonce)
             algorithm_name = "AES-GCM-256"
         elif algo_id == ALGO_AES_CTR:
-            print("Error: AES-CTR decryption not yet implemented")
-            return
+            plaintext = decrypt_aes_ctr(ciphertext, password, salt, nonce)
+            algorithm_name = "AES-CTR-128"
         elif algo_id == ALGO_CHACHA20:
-            print("Error: ChaCha20-Poly1305 decryption not yet implemented")
-            return
+            plaintext = decrypt_chacha20_poly1305(ciphertext, password, salt, nonce)
+            algorithm_name = "ChaCha20-Poly1305"
         
         # Save decrypted file
         output_filename = selected_file.replace('.enc', '_decrypted')
