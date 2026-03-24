@@ -10,7 +10,7 @@ import string
 from datetime import datetime, timedelta
 import jwt
 from functools import wraps
-from flask import request, jsonify
+from typing import Optional
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -100,14 +100,14 @@ def generate_token(user_email: str, expires_in_hours: int = 24, secret: str = No
     
     payload = {
         'email': user_email,
-        'iat': datetime.utcnow(),
-        'exp': datetime.utcnow() + timedelta(hours=expires_in_hours)
+        'iat': datetime.now(),
+        'exp': datetime.now() + timedelta(hours=expires_in_hours)
     }
     
     return jwt.encode(payload, secret, algorithm='HS256')
 
 
-def verify_token(token: str, secret: str = None) -> dict:
+def verify_token(token: str, secret: str = None) -> Optional[dict]:
     """
     Verify and decode JWT token.
     
@@ -142,7 +142,7 @@ def success_response(message: str, data: dict = None, status_code: int = 200):
     }
     if data:
         response.update(data)
-    return jsonify(response), status_code
+    return response, status_code
 
 
 def error_response(message: str, error: str = None, status_code: int = 400):
@@ -155,7 +155,7 @@ def error_response(message: str, error: str = None, status_code: int = 400):
     }
     if error:
         response['error'] = error
-    return jsonify(response), status_code
+    return response, status_code
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -191,13 +191,22 @@ def get_file_size_gb(size_bytes: int) -> float:
 # ─── DECORATORS ────────────────────────────────────────────────────────────
 # ═══════════════════════════════════════════════════════════════════════════
 
-def require_api_key(f):
+def require_api_key(f=None, api_key_getter=None):
     """
-    Decorator to require API key authentication.
+    Optional decorator helper to require API key authentication.
+    
+    This function is framework-agnostic and requires an `api_key_getter`
+    callback to extract API keys from the current request context.
     """
+    if f is None:
+        return lambda wrapped: require_api_key(wrapped, api_key_getter=api_key_getter)
+
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        api_key = request.headers.get('X-API-Key')
+        if api_key_getter is None:
+            raise RuntimeError('api_key_getter is required for require_api_key')
+
+        api_key = api_key_getter(*args, **kwargs)
         
         if not api_key or not verify_api_key(api_key):
             return error_response('Invalid or missing API key', status_code=401)
@@ -220,6 +229,7 @@ def rate_limit(max_requests: int = 100, window_seconds: int = 3600):
     """
     Simple rate limiting decorator.
     """
+    _ = (max_requests, window_seconds)
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):

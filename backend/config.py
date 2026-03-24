@@ -1,21 +1,35 @@
 """
 Server Configuration
 
-Environment-based configuration for Flask and MongoDB.
+Environment-based configuration for the backend API and MongoDB.
 """
 
 import os
 from datetime import timedelta
 
 
+def _to_bool(value, default=False):
+    if value is None:
+        return default
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
 class Config:
     """Base configuration"""
-    # Flask
+    # App runtime
+    APP_ENV = os.getenv('APP_ENV') or os.getenv('FLASK_ENV', 'development')
     DEBUG = False
     TESTING = False
     HOST = os.getenv('HOST', '0.0.0.0')
     PORT = int(os.getenv('PORT', 5000))
     SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
+
+    # TLS / QUIC transport security
+    TLS_CERT_FILE = os.getenv('TLS_CERT_FILE')
+    TLS_KEY_FILE = os.getenv('TLS_KEY_FILE')
+    FORCE_HTTPS = _to_bool(os.getenv('FORCE_HTTPS'), default=False)
+    REQUIRE_TLS_FOR_AUTH = _to_bool(os.getenv('REQUIRE_TLS_FOR_AUTH'), default=True)
+    ENABLE_HTTP3_HINT = _to_bool(os.getenv('ENABLE_HTTP3_HINT'), default=True)
     
     # MongoDB
     MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017')
@@ -69,5 +83,5 @@ config = {
 def get_config(env=None):
     """Get configuration based on environment"""
     if env is None:
-        env = os.getenv('FLASK_ENV', 'development')
+        env = os.getenv('APP_ENV') or os.getenv('FLASK_ENV', 'development')
     return config.get(env, config['default'])

@@ -1,7 +1,7 @@
 """
 Run Server Script
 
-Start the Flask API server with proper configuration.
+Start the FastAPI server with proper configuration.
 """
 
 import os
@@ -17,22 +17,25 @@ from dotenv import load_dotenv
 load_dotenv(server_dir / '.env')
 
 # Import app
-from app import app
+import uvicorn
 from config import get_config
 
 if __name__ == '__main__':
     # Get environment
-    env = os.getenv('FLASK_ENV', 'development')
+    env = os.getenv('APP_ENV') or os.getenv('FLASK_ENV', 'development')
     config = get_config(env)
     
     print("\n" + "=" * 60)
-    print("  🔐 Crypto Project - Server")
+    print("  🔐 Crypto Project - FastAPI Server")
     print("=" * 60)
     print(f"\nEnvironment: {env.upper()}")
     print(f"Host: {config.HOST}")
     print(f"Port: {config.PORT}")
     print(f"Database: {config.MONGO_DB_NAME}")
     print(f"Debug: {config.DEBUG}")
+    print(f"TLS Enforced: {config.FORCE_HTTPS}")
+    print(f"TLS for Auth: {config.REQUIRE_TLS_FOR_AUTH}")
+    print(f"HTTP/3 Hint: {config.ENABLE_HTTP3_HINT}")
     print("\n📚 API Documentation:")
     print("   GET  /api/health              - Health check")
     print("   POST /api/auth/signup         - Register new user")
@@ -48,10 +51,21 @@ if __name__ == '__main__':
     print("   GET  /api/history/list        - Get decryption history (requires token)")
     print("   DELETE /api/history/clear     - Clear decryption history (requires token)")
     print("\n🚀 Starting server...")
+    if config.TLS_CERT_FILE and config.TLS_KEY_FILE:
+        print("🔒 TLS mode enabled (direct cert/key loaded)")
+    else:
+        print("⚠️  TLS cert/key not set. For multi-laptop secure access, run behind HTTPS + HTTP/3 capable proxy.")
     print("=" * 60 + "\n")
-    
-    app.run(
-        host=config.HOST,
-        port=config.PORT,
-        debug=config.DEBUG
-    )
+
+    uvicorn_kwargs = {
+        'app': 'app:app',
+        'host': config.HOST,
+        'port': config.PORT,
+        'reload': config.DEBUG,
+    }
+
+    if config.TLS_CERT_FILE and config.TLS_KEY_FILE:
+        uvicorn_kwargs['ssl_certfile'] = config.TLS_CERT_FILE
+        uvicorn_kwargs['ssl_keyfile'] = config.TLS_KEY_FILE
+
+    uvicorn.run(**uvicorn_kwargs)

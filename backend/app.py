@@ -1,5 +1,6 @@
+
 """
-Flask API Server for Crypto Project with MongoDB Backend
+FastAPI Server for Crypto Project with MongoDB Backend.
 
 Provides RESTful API endpoints for:
 - User authentication (signup, login, logout)
@@ -7,528 +8,479 @@ Provides RESTful API endpoints for:
 - Decryption history tracking
 """
 
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
-from mongoengine import connect, ValidationError as MongoValidationError
-from werkzeug.security import generate_password_hash
-from datetime import datetime, timedelta
-import uuid
-import os
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
+import uuid
+from typing import Annotated, Optional
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from mongoengine import connect
 
 from config import Config
-from models import User, ServerSession, EncryptedFileMetadata, DecryptionHistory
-from utils import (
-    validate_email, validate_password, hash_password, 
-    verify_password, generate_token, verify_token
+from models import ServerSession, User
+from utils import generate_token, validate_email, validate_password, verify_token
+
+
+app = FastAPI(title="Crypto Project Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=Config.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+security = HTTPBearer(auto_error=False)
+INVALID_TOKEN_MESSAGE = "Invalid or missing token"
 
-# Initialize Flask app
-app = Flask(__name__)
-app.config.from_object(Config)
 
-# Initialize extensions
-CORS(app, resources={r"/api/*": {"origins": "*"}})
-jwt = JWTManager(app)
+def _is_local_request(request: Request) -> bool:
+    host = (request.url.hostname or "").lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _is_secure_request(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if forwarded_proto:
+        return forwarded_proto.lower() == "https"
+    return request.url.scheme == "https"
+
+
+@app.middleware("http")
+async def transport_security_middleware(request: Request, call_next):
+    # Enforce TLS for non-local access when enabled.
+    if Config.FORCE_HTTPS and not _is_local_request(request) and not _is_secure_request(request):
+        return JSONResponse(
+            status_code=426,
+            content={
+                "error": "TLS required",
+                "message": "Use HTTPS (TLS) to access this API.",
+            },
+        )
+
+    response = await call_next(request)
+
+    # Security headers for TLS deployments.
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+
+    if Config.FORCE_HTTPS:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+
+    # Advertise HTTP/3 (QUIC) capability when served behind an H3-capable edge proxy.
+    if Config.ENABLE_HTTP3_HINT:
+        response.headers["Alt-Svc"] = 'h3=":443"; ma=86400'
+
+    return response
+
 
 # Initialize MongoDB connection
 try:
     connect(
-        db=app.config['MONGO_DB_NAME'],
-        host=app.config['MONGO_URI'],
+        db=Config.MONGO_DB_NAME,
+        host=Config.MONGO_URI,
         connect=False,
-        serverSelectionTimeoutMS=5000
+        serverSelectionTimeoutMS=5000,
     )
     print("✓ MongoDB connected successfully")
 except Exception as e:
     print(f"✗ MongoDB connection failed: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# ─── ERROR HANDLERS ─────────────────────────────────────────────────────
-# ═══════════════════════════════════════════════════════════════════════════
-
-@app.errorhandler(400)
-def bad_request(e):
-    return jsonify({'error': 'Bad request', 'message': str(e)}), 400
-
-@app.errorhandler(401)
-def unauthorized(e):
-    return jsonify({'error': 'Unauthorized', 'message': 'Invalid or missing token'}), 401
-
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({'error': 'Not found', 'message': 'Endpoint not found'}), 404
-
-@app.errorhandler(500)
-def internal_error(e):
-    return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# ─── AUTHENTICATION ENDPOINTS ───────────────────────────────────────────
-# ═══════════════════════════════════════════════════════════════════════════
-
-@app.route('/api/auth/signup', methods=['POST'])
-def signup():
-    """
-    Register a new user account.
-    
-    Request body:
-    {
-        "email": "user@example.com",
-        "name": "John Doe",
-        "password": "securepass123"
-    }
-    """
-    try:
-        data = request.get_json()
-        
-        # Validate input
-        email = data.get('email', '').strip().lower()
-        name = data.get('name', '').strip()
-        password = data.get('password', '')
-        
-        if not email or not name or not password:
-            return jsonify({'error': 'Missing required fields'}), 400
-        
-        if not validate_email(email):
-            return jsonify({'error': 'Invalid email format'}), 400
-        
-        if not validate_password(password):
-            return jsonify({'error': 'Password must be at least 8 characters'}), 400
-        
-        # Check if user exists
-        if User.objects(email=email):
-            return jsonify({'error': 'Email already registered'}), 409
-        
-        # Create new user
-        user = User(
-            email=email,
-            name=name
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_, exc: HTTPException):
+    if exc.status_code == 401:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Unauthorized", "message": "Invalid or missing token"},
         )
+    if exc.status_code == 404:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Not found", "message": str(exc.detail)},
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": "Bad request", "message": str(exc.detail)},
+    )
+
+
+def get_current_user(
+    request: Request,
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
+):
+    if Config.REQUIRE_TLS_FOR_AUTH and not _is_local_request(request) and not _is_secure_request(request):
+        raise HTTPException(status_code=401, detail="TLS required for authentication")
+
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    token = credentials.credentials
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    email = payload.get("email")
+    if not email:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    session = ServerSession.objects(
+        token=token,
+        user_email=email,
+        is_active=True,
+        expires_at__gt=datetime.now(timezone.utc),
+    ).first()
+    if not session:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    user = User.objects(email=email).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    return {"user": user, "email": email, "token": token}
+
+
+@app.post("/api/auth/signup")
+async def signup(payload: dict, request: Request):
+    try:
+        if Config.REQUIRE_TLS_FOR_AUTH and not _is_local_request(request) and not _is_secure_request(request):
+            return JSONResponse(status_code=401, content={"error": "TLS required for signup"})
+
+        email = payload.get("email", "").strip().lower()
+        name = payload.get("name", "").strip()
+        password = payload.get("password", "")
+
+        if not email or not name or not password:
+            return JSONResponse(status_code=400, content={"error": "Missing required fields"})
+
+        if not validate_email(email):
+            return JSONResponse(status_code=400, content={"error": "Invalid email format"})
+
+        if not validate_password(password):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Password must be at least 8 characters"},
+            )
+
+        if User.objects(email=email):
+            return JSONResponse(status_code=409, content={"error": "Email already registered"})
+
+        user = User(email=email, name=name)
         user.set_password(password)
         user.save()
-        
-        return jsonify({
-            'message': 'Account created successfully',
-            'user': {
-                'email': user.email,
-                'name': user.name
-            }
-        }), 201
-        
-    except Exception as e:
-        return jsonify({'error': 'Signup failed', 'message': str(e)}), 500
 
-
-@app.route('/api/auth/login', methods=['POST'])
-def login():
-    """
-    Authenticate user and return JWT token.
-    
-    Request body:
-    {
-        "email": "user@example.com",
-        "password": "securepass123"
-    }
-    """
-    try:
-        data = request.get_json()
-        email = data.get('email', '').strip().lower()
-        password = data.get('password', '')
-        
-        if not email or not password:
-            return jsonify({'error': 'Email and password required'}), 400
-        
-        # Find user
-        user = User.objects(email=email).first()
-        
-        if not user or not user.check_password(password):
-            return jsonify({'error': 'Invalid email or password'}), 401
-        
-        if not user.is_active:
-            return jsonify({'error': 'Account is inactive'}), 403
-        
-        # Create JWT token (expires in 24 hours)
-        access_token = create_access_token(
-            identity=user.email,
-            expires_delta=timedelta(days=1)
+        return JSONResponse(
+            status_code=201,
+            content={
+                "message": "Account created successfully",
+                "user": {"email": user.email, "name": user.name},
+            },
         )
-        
-        # Update last login
-        user.last_login = datetime.utcnow()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": "Signup failed", "message": str(e)})
+
+
+@app.post("/api/auth/login")
+async def login(payload: dict, request: Request):
+    try:
+        if Config.REQUIRE_TLS_FOR_AUTH and not _is_local_request(request) and not _is_secure_request(request):
+            return JSONResponse(status_code=401, content={"error": "TLS required for login"})
+
+        email = payload.get("email", "").strip().lower()
+        password = payload.get("password", "")
+
+        if not email or not password:
+            return JSONResponse(status_code=400, content={"error": "Email and password required"})
+
+        user = User.objects(email=email).first()
+        if not user or not user.check_password(password):
+            return JSONResponse(status_code=401, content={"error": "Invalid email or password"})
+
+        if not user.is_active:
+            return JSONResponse(status_code=403, content={"error": "Account is inactive"})
+
+        access_token = generate_token(user.email, expires_in_hours=24)
+
+        user.last_login = datetime.now(timezone.utc)
         user.failed_login_attempts = 0
         user.save()
-        
-        # Create session record
+
         session = ServerSession(
             user_email=user.email,
             token=access_token,
-            expires_at=datetime.utcnow() + timedelta(days=1),
-            ip_address=request.remote_addr,
-            user_agent=request.headers.get('User-Agent', '')
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", ""),
         )
         session.save()
-        
-        return jsonify({
-            'message': 'Login successful',
-            'token': access_token,
-            'user': user.to_dict()
-        }), 200
-        
+
+        return JSONResponse(
+            status_code=200,
+            content={"message": "Login successful", "token": access_token, "user": user.to_dict()},
+        )
     except Exception as e:
-        return jsonify({'error': 'Login failed', 'message': str(e)}), 500
+        return JSONResponse(status_code=500, content={"error": "Login failed", "message": str(e)})
 
 
-@app.route('/api/auth/logout', methods=['POST'])
-@jwt_required()
-def logout():
-    """
-    Logout user and invalidate session token.
-    """
+@app.post("/api/auth/logout")
+async def logout(current: Annotated[dict, Depends(get_current_user)]):
     try:
-        email = get_jwt_identity()
-        
-        # Invalidate session
-        ServerSession.objects(user_email=email).update(set__is_active=False)
-        
-        return jsonify({'message': 'Logged out successfully'}), 200
-        
+        email = current["email"]
+        token = current["token"]
+        ServerSession.objects(user_email=email, token=token).update(set__is_active=False)
+        return JSONResponse(status_code=200, content={"message": "Logged out successfully"})
     except Exception as e:
-        return jsonify({'error': 'Logout failed', 'message': str(e)}), 500
+        return JSONResponse(status_code=500, content={"error": "Logout failed", "message": str(e)})
 
 
-@app.route('/api/auth/profile', methods=['GET'])
-@jwt_required()
-def get_profile():
-    """
-    Get current user profile.
-    """
+@app.get("/api/auth/profile")
+async def get_profile(current: Annotated[dict, Depends(get_current_user)]):
     try:
-        email = get_jwt_identity()
+        email = current["email"]
         user = User.objects(email=email).first()
-        
+
         if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        return jsonify({
-            'user': user.to_dict()
-        }), 200
-        
+            return JSONResponse(status_code=404, content={"error": "User not found"})
+
+        return JSONResponse(status_code=200, content={"user": user.to_dict()})
     except Exception as e:
-        return jsonify({'error': 'Failed to fetch profile', 'message': str(e)}), 500
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Failed to fetch profile", "message": str(e)},
+        )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# ─── FILE MANAGEMENT ENDPOINTS ──────────────────────────────────────────
-# ═══════════════════════════════════════════════════════════════════════════
-
-@app.route('/api/files/upload', methods=['POST'])
-@jwt_required()
-def upload_encrypted_file():
-    """
-    Upload encrypted file to server.
-    
-    Request (multipart/form-data):
-    - file: encrypted file binary
-    - original_name: original filename
-    - algorithm: encryption algorithm used
-    - file_size: original file size in bytes
-    """
+@app.post("/api/files/upload")
+async def upload_encrypted_file(
+    file: Annotated[UploadFile, File(...)],
+    current: Annotated[dict, Depends(get_current_user)],
+    original_name: Annotated[str, Form()] = "encrypted_file",
+    algorithm: Annotated[str, Form()] = "AES-256-GCM",
+    file_size: Annotated[int, Form()] = 0,
+):
+    _ = file_size
     try:
-        email = get_jwt_identity()
-        user = User.objects(email=email).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
-        
-        file = request.files['file']
-        original_name = request.form.get('original_name', 'encrypted_file')
-        algorithm = request.form.get('algorithm', 'AES-256-GCM')
-        file_size = request.form.get('file_size', type=int, default=0)
-        
-        if not file or file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-        
-        # Generate unique file ID
+        user = current["user"]
+
+        if not file:
+            return JSONResponse(status_code=400, content={"error": "No file provided"})
+
+        encrypted_data = await file.read()
+        if not encrypted_data:
+            return JSONResponse(status_code=400, content={"error": "No file selected"})
+
         file_id = str(uuid.uuid4())
-        encrypted_data = file.read()
         actual_size = len(encrypted_data)
-        
-        # Add to user's encrypted files
+
         user.add_encrypted_file(
             file_id=file_id,
             original_name=original_name,
             algorithm=algorithm,
             file_size=actual_size,
-            encrypted_data=encrypted_data
+            encrypted_data=encrypted_data,
         )
-        
-        return jsonify({
-            'message': 'File uploaded successfully',
-            'file_id': file_id,
-            'file_name': original_name,
-            'algorithm': algorithm,
-            'file_size': actual_size
-        }), 201
-        
+
+        return JSONResponse(
+            status_code=201,
+            content={
+                "message": "File uploaded successfully",
+                "file_id": file_id,
+                "file_name": original_name,
+                "algorithm": algorithm,
+                "file_size": actual_size,
+            },
+        )
     except Exception as e:
-        return jsonify({'error': 'File upload failed', 'message': str(e)}), 500
+        return JSONResponse(
+            status_code=500,
+            content={"error": "File upload failed", "message": str(e)},
+        )
 
 
-@app.route('/api/files/list', methods=['GET'])
-@jwt_required()
-def list_encrypted_files():
-    """
-    List all encrypted files for current user.
-    """
+@app.get("/api/files/list")
+async def list_encrypted_files(current: Annotated[dict, Depends(get_current_user)]):
     try:
-        email = get_jwt_identity()
-        user = User.objects(email=email).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
+        user = current["user"]
+
         files = [
             {
-                'file_id': f.file_id,
-                'original_name': f.original_name,
-                'algorithm': f.algorithm,
-                'file_size': f.file_size,
-                'uploaded_at': f.uploaded_at.isoformat() if f.uploaded_at else None
+                "file_id": f.file_id,
+                "original_name": f.original_name,
+                "algorithm": f.algorithm,
+                "file_size": f.file_size,
+                "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
             }
             for f in user.encrypted_files
         ]
-        
-        return jsonify({
-            'total_files': len(files),
-            'total_storage_mb': round(user.total_storage_used / (1024 * 1024), 2),
-            'files': files
-        }), 200
-        
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "total_files": len(files),
+                "total_storage_mb": round(user.total_storage_used / (1024 * 1024), 2),
+                "files": files,
+            },
+        )
     except Exception as e:
-        return jsonify({'error': 'Failed to list files', 'message': str(e)}), 500
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Failed to list files", "message": str(e)},
+        )
 
 
-@app.route('/api/files/download/<file_id>', methods=['GET'])
-@jwt_required()
-def download_encrypted_file(file_id):
-    """
-    Download encrypted file.
-    """
+@app.get("/api/files/download/{file_id}")
+async def download_encrypted_file(file_id: str, current: Annotated[dict, Depends(get_current_user)]):
     try:
-        email = get_jwt_identity()
-        user = User.objects(email=email).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
+        user = current["user"]
         file_obj = user.get_encrypted_file(file_id)
-        
+
         if not file_obj:
-            return jsonify({'error': 'File not found'}), 404
-        
-        # Return file as binary
-        return send_file(
+            return JSONResponse(status_code=404, content={"error": "File not found"})
+
+        filename = f"{file_obj.original_name}.enc"
+        return StreamingResponse(
             BytesIO(file_obj.encrypted_data),
-            mimetype='application/octet-stream',
-            as_attachment=True,
-            download_name=f"{file_obj.original_name}.enc"
-        ), 200
-        
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
     except Exception as e:
-        return jsonify({'error': 'File download failed', 'message': str(e)}), 500
+        return JSONResponse(
+            status_code=500,
+            content={"error": "File download failed", "message": str(e)},
+        )
 
 
-@app.route('/api/files/delete/<file_id>', methods=['DELETE'])
-@jwt_required()
-def delete_encrypted_file(file_id):
-    """
-    Delete encrypted file from server.
-    """
+@app.delete("/api/files/delete/{file_id}")
+async def delete_encrypted_file(file_id: str, current: Annotated[dict, Depends(get_current_user)]):
     try:
-        email = get_jwt_identity()
-        user = User.objects(email=email).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
+        user = current["user"]
+
         if user.delete_encrypted_file(file_id):
-            return jsonify({
-                'message': 'File deleted successfully',
-                'total_files': user.total_encrypted_files,
-                'total_storage_mb': round(user.total_storage_used / (1024 * 1024), 2)
-            }), 200
-        else:
-            return jsonify({'error': 'File not found'}), 404
-        
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "message": "File deleted successfully",
+                    "total_files": user.total_encrypted_files,
+                    "total_storage_mb": round(user.total_storage_used / (1024 * 1024), 2),
+                },
+            )
+
+        return JSONResponse(status_code=404, content={"error": "File not found"})
     except Exception as e:
-        return jsonify({'error': 'File deletion failed', 'message': str(e)}), 500
+        return JSONResponse(
+            status_code=500,
+            content={"error": "File deletion failed", "message": str(e)},
+        )
 
 
-@app.route('/api/files/delete-all', methods=['DELETE'])
-@jwt_required()
-def delete_all_files():
-    """
-    Delete all encrypted files for user.
-    """
+@app.delete("/api/files/delete-all")
+async def delete_all_files(current: Annotated[dict, Depends(get_current_user)]):
     try:
-        email = get_jwt_identity()
-        user = User.objects(email=email).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
+        user = current["user"]
         user.clear_encrypted_files()
-        
-        return jsonify({
-            'message': 'All files deleted successfully',
-            'total_files': 0
-        }), 200
-        
+
+        return JSONResponse(
+            status_code=200,
+            content={"message": "All files deleted successfully", "total_files": 0},
+        )
     except Exception as e:
-        return jsonify({'error': 'Failed to delete files', 'message': str(e)}), 500
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Failed to delete files", "message": str(e)},
+        )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# ─── DECRYPTION HISTORY ENDPOINTS ───────────────────────────────────────
-# ═══════════════════════════════════════════════════════════════════════════
-
-@app.route('/api/history/add-record', methods=['POST'])
-@jwt_required()
-def add_decryption_record():
-    """
-    Record a decryption operation.
-    
-    Request body:
-    {
-        "encrypted_file_id": "file_id",
-        "encrypted_file_name": "filename.enc",
-        "original_filename": "original.pdf",
-        "file_size": 5242880
-    }
-    """
+@app.post("/api/history/add-record")
+async def add_decryption_record(payload: dict, current: Annotated[dict, Depends(get_current_user)]):
     try:
-        email = get_jwt_identity()
-        user = User.objects(email=email).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        data = request.get_json()
+        user = current["user"]
+
         history_id = str(uuid.uuid4())
-        encrypted_file_id = data.get('encrypted_file_id', '')
-        encrypted_file_name = data.get('encrypted_file_name', '')
-        original_filename = data.get('original_filename')
-        file_size = data.get('file_size', type=int)
-        
+        encrypted_file_id = payload.get("encrypted_file_id", "")
+        encrypted_file_name = payload.get("encrypted_file_name", "")
+        original_filename = payload.get("original_filename")
+
+        file_size_value = payload.get("file_size")
+        file_size = int(file_size_value) if file_size_value is not None else None
+
         user.add_decryption_record(
             history_id=history_id,
             encrypted_file_id=encrypted_file_id,
             encrypted_file_name=encrypted_file_name,
             original_filename=original_filename,
-            file_size=file_size
+            file_size=file_size,
         )
-        
-        return jsonify({
-            'message': 'Decryption record added',
-            'history_id': history_id
-        }), 201
-        
+
+        return JSONResponse(
+            status_code=201,
+            content={"message": "Decryption record added", "history_id": history_id},
+        )
     except Exception as e:
-        return jsonify({'error': 'Failed to add record', 'message': str(e)}), 500
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Failed to add record", "message": str(e)},
+        )
 
 
-@app.route('/api/history/list', methods=['GET'])
-@jwt_required()
-def list_decryption_history():
-    """
-    Get decryption history for current user.
-    """
+@app.get("/api/history/list")
+async def list_decryption_history(current: Annotated[dict, Depends(get_current_user)]):
     try:
-        email = get_jwt_identity()
-        user = User.objects(email=email).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
+        user = current["user"]
+
         history = [
             {
-                'history_id': h.history_id,
-                'encrypted_file_id': h.encrypted_file_id,
-                'encrypted_file_name': h.encrypted_file_name,
-                'original_filename': h.original_filename,
-                'file_size': h.file_size,
-                'decrypted_at': h.decrypted_at.isoformat() if h.decrypted_at else None
+                "history_id": h.history_id,
+                "encrypted_file_id": h.encrypted_file_id,
+                "encrypted_file_name": h.encrypted_file_name,
+                "original_filename": h.original_filename,
+                "file_size": h.file_size,
+                "decrypted_at": h.decrypted_at.isoformat() if h.decrypted_at else None,
             }
             for h in user.decryption_history
         ]
-        
-        return jsonify({
-            'total_records': len(history),
-            'history': history
-        }), 200
-        
+
+        return JSONResponse(status_code=200, content={"total_records": len(history), "history": history})
     except Exception as e:
-        return jsonify({'error': 'Failed to fetch history', 'message': str(e)}), 500
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Failed to fetch history", "message": str(e)},
+        )
 
 
-@app.route('/api/history/clear', methods=['DELETE'])
-@jwt_required()
-def clear_decryption_history():
-    """
-    Clear all decryption history records.
-    """
+@app.delete("/api/history/clear")
+async def clear_decryption_history(current: Annotated[dict, Depends(get_current_user)]):
     try:
-        email = get_jwt_identity()
-        user = User.objects(email=email).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
+        user = current["user"]
         user.clear_decryption_history()
-        
-        return jsonify({
-            'message': 'Decryption history cleared',
-            'total_records': 0
-        }), 200
-        
+
+        return JSONResponse(
+            status_code=200,
+            content={"message": "Decryption history cleared", "total_records": 0},
+        )
     except Exception as e:
-        return jsonify({'error': 'Failed to clear history', 'message': str(e)}), 500
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Failed to clear history", "message": str(e)},
+        )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# ─── HEALTH CHECK ───────────────────────────────────────────────────────
-# ═══════════════════════════════════════════════════════════════════════════
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """
-    Check server and database health.
-    """
+@app.get("/api/health")
+async def health_check():
     try:
-        # Test MongoDB connection
         User.objects().count()
-        db_status = 'connected'
-    except:
-        db_status = 'disconnected'
-    
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat(),
-        'database': db_status
-    }), 200
+        db_status = "connected"
+    except Exception:
+        db_status = "disconnected"
 
-
-if __name__ == '__main__':
-    app.run(
-        host=app.config['HOST'],
-        port=app.config['PORT'],
-        debug=app.config['DEBUG']
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "healthy",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "database": db_status,
+        },
     )
