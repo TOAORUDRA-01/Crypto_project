@@ -1,7 +1,7 @@
 """
-Local Flask Web Application for File Encryption
+Local FastAPI Web Application for File Encryption
 
-Provides Flask API endpoints for local desktop-mode encryption/decryption.
+Provides FastAPI endpoints for local desktop-mode encryption/decryption.
 """
 
 import os
@@ -17,13 +17,17 @@ from crypto.aes_ctr import encrypt_aes_ctr, decrypt_aes_ctr
 from crypto.chacha20_poly1305 import encrypt_chacha20_poly1305, decrypt_chacha20_poly1305
 
 try:
-    from flask import Flask, jsonify, request, send_file, send_from_directory
+    from fastapi import FastAPI, File, Form, UploadFile
+    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.staticfiles import StaticFiles
 except ImportError:
-    Flask = None
-    jsonify = None
-    request = None
-    send_file = None
-    send_from_directory = None
+    FastAPI = None
+    File = None
+    Form = None
+    UploadFile = None
+    FileResponse = None
+    JSONResponse = None
+    StaticFiles = None
 
 # Algorithm IDs for file format
 ALGO_AES_GCM = 1
@@ -90,65 +94,58 @@ def decrypt_bytes(encrypted_data: bytes, password: str):
 
 
 def create_web_app():
-    """Create and configure Flask web application for local encryption."""
-    if Flask is None:
-        raise RuntimeError("Flask is not installed. Install it with: pip install flask")
+    """Create and configure FastAPI web application for local encryption."""
+    if FastAPI is None:
+        raise RuntimeError("FastAPI is not installed. Install it with: pip install fastapi uvicorn")
 
-    web_app = Flask(__name__, static_folder=".", static_url_path="")
-
-    @web_app.get("/")
-    def index_page():
-        return send_from_directory(".", "index.html")
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    frontend_dir = os.path.join(app_dir, "crypto_client_frontend")
+    
+    web_app = FastAPI(title="Local Encryption Service")
+    
+    # Mount static files for serving the frontend
+    web_app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
 
     @web_app.post("/api/local/encrypt")
-    def api_local_encrypt():
-        uploaded = request.files.get("file")
-        password = request.form.get("password", "")
-        algorithm = request.form.get("algorithm", "AES-256-GCM")
-
-        if uploaded is None or uploaded.filename == "":
-            return jsonify({"error": "File is required"}), 400
+    async def api_local_encrypt(file: UploadFile = File(...), password: str = Form(...), algorithm: str = Form(...)):
+        if not file or file.filename == "":
+            return JSONResponse({"error": "File is required"}, status_code=400)
         if not password:
-            return jsonify({"error": "Password is required"}), 400
+            return JSONResponse({"error": "Password is required"}, status_code=400)
 
         try:
-            raw = uploaded.read()
+            raw = await file.read()
             encrypted_data, algorithm_name = encrypt_bytes(raw, password, algorithm)
-            output_name = f"{Path(uploaded.filename).name}.enc"
-            response = send_file(
+            output_name = f"{Path(file.filename).name}.enc"
+            
+            return FileResponse(
                 BytesIO(encrypted_data),
-                as_attachment=True,
-                download_name=output_name,
-                mimetype="application/octet-stream",
+                media_type="application/octet-stream",
+                filename=output_name,
+                headers={"X-Algorithm": algorithm_name}
             )
-            response.headers["X-Algorithm"] = algorithm_name
-            return response
         except Exception as exc:
-            return jsonify({"error": f"Encryption failed: {exc}"}), 400
+            return JSONResponse({"error": f"Encryption failed: {exc}"}, status_code=400)
 
     @web_app.post("/api/local/decrypt")
-    def api_local_decrypt():
-        uploaded = request.files.get("file")
-        password = request.form.get("password", "")
-
-        if uploaded is None or uploaded.filename == "":
-            return jsonify({"error": "File is required"}), 400
+    async def api_local_decrypt(file: UploadFile = File(...), password: str = Form(...)):
+        if not file or file.filename == "":
+            return JSONResponse({"error": "File is required"}, status_code=400)
         if not password:
-            return jsonify({"error": "Password is required"}), 400
+            return JSONResponse({"error": "Password is required"}, status_code=400)
 
         try:
-            encrypted_data = uploaded.read()
+            encrypted_data = await file.read()
             plaintext, algorithm_name = decrypt_bytes(encrypted_data, password)
-            output_name = uploaded.filename.replace('.enc', '') if uploaded.filename.endswith('.enc') else f"{uploaded.filename}.decrypted"
-            response = send_file(
+            output_name = file.filename.replace('.enc', '') if file.filename.endswith('.enc') else f"{file.filename}.decrypted"
+            
+            return FileResponse(
                 BytesIO(plaintext),
-                as_attachment=True,
-                download_name=output_name,
-                mimetype="application/octet-stream",
+                media_type="application/octet-stream",
+                filename=output_name,
+                headers={"X-Algorithm": algorithm_name}
             )
-            response.headers["X-Algorithm"] = algorithm_name
-            return response
         except Exception:
-            return jsonify({"error": "Decryption failed. Wrong password or invalid encrypted file."}), 400
+            return JSONResponse({"error": "Decryption failed. Wrong password or invalid encrypted file."}, status_code=400)
 
     return web_app
