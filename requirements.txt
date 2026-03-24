@@ -15,5 +15,4 @@ cryptography>=42.0.0
 # Key Derivation Function (Argon2 - memory hard)
 argon2-cffi>=23.0.0
 
-# Local UI backend server
-flask>=3.0.0
+
