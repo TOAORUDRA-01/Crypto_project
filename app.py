@@ -21,8 +21,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from crypto.aes_gcm import encrypt_aes_gcm, ALGO_ID as AES_GCM_ALGO
 from crypto.aes_ctr import encrypt_aes_ctr, decrypt_aes_ctr
 from crypto.chacha20_poly1305 import encrypt_chacha20_poly1305, decrypt_chacha20_poly1305
+from crypto.aes_gcm import decrypt_aes_gcm
 
-# Constants
+from local_app import create_web_app
+
+try:
+    import uvicorn
+except ImportError:
+    uvicorn = None
 STORAGE_DIR = "storage"
 DECRYPTED_DIR = "decrypted"
 TEST_FILES_DIR = "test_files"
@@ -333,5 +339,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1].lower() in {"web", "ui", "serve"}:
+        if uvicorn is None:
+            raise RuntimeError("uvicorn is not installed. Install it with: pip install uvicorn")
+        web_app = create_web_app()
+        uvicorn.run(web_app, host="127.0.0.1", port=5000)
+    else:
+        main()
 
