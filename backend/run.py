@@ -22,7 +22,7 @@ from config import get_config
 
 if __name__ == '__main__':
     # Get environment
-    env = os.getenv('APP_ENV') or os.getenv('FLASK_ENV', 'development')
+   env = os.getenv('APP_ENV', 'development')
     config = get_config(env)
     
     print("\n" + "=" * 60)
