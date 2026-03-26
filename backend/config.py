@@ -17,7 +17,7 @@ def _to_bool(value, default=False):
 class Config:
     """Base configuration"""
     # App runtime
-    APP_ENV = os.getenv('APP_ENV') or os.getenv('FLASK_ENV', 'development')
+    APP_ENV = os.getenv('APP_ENV', 'development')
     DEBUG = False
     TESTING = False
     HOST = os.getenv('HOST', '0.0.0.0')
@@ -83,5 +83,5 @@ config = {
 def get_config(env=None):
     """Get configuration based on environment"""
     if env is None:
-        env = os.getenv('APP_ENV') or os.getenv('FLASK_ENV', 'development')
+         env = os.getenv('APP_ENV', 'development')
     return config.get(env, config['default'])
