@@ -10,7 +10,9 @@ from io import BytesIO
 from pathlib import Path
 
 # Ensure crypto modules can be imported
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from crypto.aes_gcm import encrypt_aes_gcm, decrypt_aes_gcm
 from crypto.aes_ctr import encrypt_aes_ctr, decrypt_aes_ctr
@@ -98,16 +100,15 @@ def create_web_app():
     if FastAPI is None:
         raise RuntimeError("FastAPI is not installed. Install it with: pip install fastapi uvicorn")
 
-    app_dir = os.path.dirname(os.path.abspath(__file__))
-    frontend_dir = os.path.join(app_dir, "crypto_client_frontend")
+    frontend_dir = PROJECT_ROOT / "online" / "frontend"
     
     web_app = FastAPI(title="Local Encryption Service")
     
     # Mount static files for serving the frontend
-    web_app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
+    web_app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="static")
 
     @web_app.post("/api/local/encrypt")
-    async def api_local_encrypt(file: UploadFile = File(...), password: str = Form(...), algorithm: str = Form(...)):
+    async def api_local_encrypt(file = File(...), password: str = Form(...), algorithm: str = Form(...)):
         if not file or file.filename == "":
             return JSONResponse({"error": "File is required"}, status_code=400)
         if not password:
@@ -128,7 +129,7 @@ def create_web_app():
             return JSONResponse({"error": f"Encryption failed: {exc}"}, status_code=400)
 
     @web_app.post("/api/local/decrypt")
-    async def api_local_decrypt(file: UploadFile = File(...), password: str = Form(...)):
+    async def api_local_decrypt(file = File(...), password: str = Form(...)):
         if not file or file.filename == "":
             return JSONResponse({"error": "File is required"}, status_code=400)
         if not password:

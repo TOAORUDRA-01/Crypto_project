@@ -4,16 +4,10 @@ Database Initialization Script
 Initialize MongoDB collections and create necessary indexes.
 """
 
-import os
-import sys
 from mongoengine import connect, disconnect
-from datetime import datetime
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from models import User, ServerSession
-from config import Config
+from .models import User, ServerSession
+from ..backend.config import Config
 
 
 def init_database():
