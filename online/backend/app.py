@@ -129,8 +129,10 @@ def _is_secure_request(request: Request) -> bool:
 
 
 def _ensure_secure_auth_transport(request: Request):
-    if CONFIG.REQUIRE_TLS_FOR_AUTH and not _is_local_request(request) and not _is_secure_request(request):
-        raise HTTPException(status_code=401, detail="TLS required for authentication")
+    # Temporarily disabled TLS requirement for network testing
+    # if CONFIG.REQUIRE_TLS_FOR_AUTH and not _is_local_request(request) and not _is_secure_request(request):
+    #     raise HTTPException(status_code=401, detail="TLS required for authentication")
+    pass
 
 
 def _enforce_rate_limit(request: Request, scope: str, limit: int):
@@ -231,11 +233,12 @@ app.add_middleware(
 
 @app.middleware("http")
 async def transport_security_middleware(request: Request, call_next):
-    if CONFIG.FORCE_HTTPS and not _is_local_request(request) and not _is_secure_request(request):
-        return JSONResponse(
-            status_code=426,
-            content={"error": "TLS required", "message": "Use HTTPS (TLS) to access this API."},
-        )
+    # Temporarily disabled TLS requirement for network testing
+    # if CONFIG.FORCE_HTTPS and not _is_local_request(request) and not _is_secure_request(request):
+    #     return JSONResponse(
+    #         status_code=426,
+    #         content={"error": "TLS required", "message": "Use HTTPS (TLS) to access this API."},
+    #     )
 
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
