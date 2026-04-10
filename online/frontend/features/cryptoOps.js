@@ -22,7 +22,7 @@ export async function encryptFile() {
 	}
 	const algo = document.getElementById('algorithm').value;
 	const btn = document.getElementById('encryptBtn');
-	const isOnline = document.getElementById('encOnlineBtn').classList.contains('active');
+	const isOnline = state.appMode === 'cloud';
 	btn.disabled = true;
 	setStatus('enc', '', '');
 	showProgress('enc', 'Reading file...');
@@ -73,7 +73,7 @@ export async function encryptFile() {
 }
 
 export async function decryptFile() {
-	const isOnline = document.getElementById('decOnlineBtn').classList.contains('active');
+	const isOnline = state.appMode === 'cloud';
 	const pass = document.getElementById('decPassword').value;
 	if (!pass) {
 		setStatus('dec', 'Please enter the password.', 'err');

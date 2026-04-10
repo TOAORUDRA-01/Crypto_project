@@ -3,6 +3,7 @@ Utility functions for validation, token management, and rate limiting.
 """
 
 import hashlib
+import logging
 import re
 import secrets
 import string
@@ -19,6 +20,7 @@ from .config import get_config
 
 
 CONFIG = get_config()
+security_logger = logging.getLogger("security")
 
 
 def validate_email(email: str) -> bool:
@@ -83,8 +85,62 @@ def verify_token(token: str) -> Optional[dict]:
         email = payload.get("email")
         if not email or not validate_email(email):
             return None
+        if payload.get("type") == "refresh":
+            # Refuse refresh tokens on endpoints expecting access tokens
+            return None
         return payload
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+    except jwt.ExpiredSignatureError:
+        security_logger.warning("expired access token presented")
+        return None
+    except jwt.InvalidTokenError as exc:
+        security_logger.warning("invalid access token: %s", exc)
+        return None
+    except Exception:
+        security_logger.exception("unexpected error during token verification")
+        return None
+
+
+def generate_refresh_token(user_email: str, token_version: int = 0) -> str:
+    """Issue a long-lived refresh token (type: refresh)."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user_email,
+        "email": user_email,
+        "jti": str(uuid4()),
+        "token_version": token_version,
+        "type": "refresh",
+        "iss": CONFIG.JWT_ISSUER,
+        "aud": CONFIG.JWT_AUDIENCE,
+        "iat": now,
+        "exp": now + timedelta(days=CONFIG.REFRESH_TOKEN_EXPIRE_DAYS),
+    }
+    return jwt.encode(payload, CONFIG.JWT_SECRET_KEY, algorithm="HS256")
+
+
+def verify_refresh_token(token: str) -> Optional[dict]:
+    """Validate a refresh token and return its payload, or None."""
+    try:
+        payload = jwt.decode(
+            token,
+            CONFIG.JWT_SECRET_KEY,
+            algorithms=["HS256"],
+            issuer=CONFIG.JWT_ISSUER,
+            audience=CONFIG.JWT_AUDIENCE,
+        )
+        if payload.get("type") != "refresh":
+            return None  # not a refresh token
+        email = payload.get("email")
+        if not email or not validate_email(email):
+            return None
+        return payload
+    except jwt.ExpiredSignatureError:
+        security_logger.warning("expired refresh token presented")
+        return None
+    except jwt.InvalidTokenError as exc:
+        security_logger.warning("invalid refresh token: %s", exc)
+        return None
+    except Exception:
+        security_logger.exception("unexpected error during refresh token verification")
         return None
 
 

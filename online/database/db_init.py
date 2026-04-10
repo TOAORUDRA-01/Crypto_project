@@ -4,6 +4,9 @@ Database Initialization Script
 Initialize MongoDB collections and create necessary indexes.
 """
 
+import os
+import secrets
+
 from mongoengine import connect, disconnect
 
 from .models import User, ServerSession
@@ -71,37 +74,51 @@ def init_database():
 def create_sample_user():
     """
     Create a sample user for testing (optional).
+
+    Requires SEED_DEMO_DATA=true environment variable.
+    Refuses to run in production.
     """
+    if os.environ.get("SEED_DEMO_DATA") != "true":
+        raise RuntimeError(
+            "Refusing to seed: set SEED_DEMO_DATA=true explicitly (never in production)."
+        )
+
+    app_env = os.environ.get("APP_ENV", "") or os.environ.get("FLASK_ENV", "")
+    if app_env.lower() == "production":
+        raise RuntimeError("Refusing to seed demo data in production.")
+
     try:
         connect(
             db=Config.MONGO_DB_NAME,
             host=Config.MONGO_URI,
             connect=False
         )
-        
+
         # Check if sample user exists
         sample_user = User.objects(email='demo@example.com').first()
-        
+
         if sample_user:
             print("Sample user already exists: demo@example.com")
             return
-        
-        # Create sample user
+
+        # Generate a random, non-static password
+        password = secrets.token_urlsafe(16)
+
         user = User(
             email='demo@example.com',
             name='Demo User'
         )
-        user.set_password('DemoPass123')
+        user.set_password(password)
         user.save()
-        
-        print("✓ Sample user created:")
-        print(f"   Email: demo@example.com")
-        print(f"   Password: DemoPass123")
-        print("\n⚠️  Change this password in production!")
-        
+
+        # Print to stdout/logs only — never store plain password in code
+        print("[seed] Demo user created: demo@example.com")
+        print(f"[seed] Temporary password: {password}  " 
+        "(visible in logs only — change immediately)")
+
     except Exception as e:
         print(f"Error creating sample user: {e}")
-    
+
     finally:
         disconnect()
 

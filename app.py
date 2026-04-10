@@ -1,349 +1,676 @@
 """
-Password-Based File Encryption Tool
-
-A secure file encryption tool that supports multiple encryption algorithms:
-- AES-GCM (recommended)
-- AES-CTR
-- ChaCha20-Poly1305
-
-Uses Argon2id for key derivation.
+FastAPI server for the crypto project backend.
 """
 
-import os
-import sys
+import logging
 import uuid
-import getpass
-from pathlib import Path
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from io import BytesIO
+from typing import Annotated, Optional
 
-# Ensure crypto modules can be imported
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import certifi
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from mongoengine import NotUniqueError, connect, disconnect
+from mongoengine.connection import get_db
+from pymongo.errors import OperationFailure
+from pydantic import BaseModel, field_validator
 
-from crypto.aes_gcm import encrypt_aes_gcm, ALGO_ID as AES_GCM_ALGO
-from crypto.aes_ctr import encrypt_aes_ctr, decrypt_aes_ctr
-from crypto.chacha20_poly1305 import encrypt_chacha20_poly1305, decrypt_chacha20_poly1305
-from crypto.aes_gcm import decrypt_aes_gcm
-
-from local_app import create_web_app
-
-try:
-    import uvicorn
-except ImportError:
-    uvicorn = None
-STORAGE_DIR = "storage"
-DECRYPTED_DIR = "decrypted"
-TEST_FILES_DIR = "test_files"
-
-# Algorithm IDs for file format
-ALGO_AES_GCM = 1
-ALGO_AES_CTR = 2
-ALGO_CHACHA20 = 3
-
-
-def ensure_directories():
-    """Create necessary directories if they don't exist."""
-    for directory in [STORAGE_DIR, DECRYPTED_DIR, TEST_FILES_DIR]:
-        os.makedirs(directory, exist_ok=True)
+from .config import get_config
+from .models import DecryptionHistory, EncryptedFile, ServerSession, User
+from .utils import (
+    allowed_file,
+    consume_rate_limit,
+    generate_refresh_token,
+    generate_token,
+    hash_token,
+    sanitize_filename,
+    validate_email,
+    validate_password,
+    verify_refresh_token,
+    verify_token,
+)
 
 
-def get_password() -> str:
-    """Get password from user with masked input."""
-    while True:
-        password = getpass.getpass("Enter password: ")
-        if password:
-            return password
-        print("Password cannot be empty. Please try again.")
+CONFIG = get_config()
+logger = logging.getLogger(__name__)
+security = HTTPBearer(auto_error=False)
+INVALID_TOKEN_MESSAGE = "Invalid or missing token"
 
 
-def select_algorithm() -> int:
-    """Display algorithm selection menu and return choice."""
-    print("\nSelect encryption algorithm:")
-    print("1. AES-GCM (recommended)")
-    print("2. AES-CTR")
-    print("3. ChaCha20-Poly1305")
-    
-    while True:
-        choice = input("Enter choice (1-3): ").strip()
-        if choice in ['1', '2', '3']:
-            return int(choice)
-        print("Invalid selection. Please enter 1, 2, or 3.")
+class SignupRequest(BaseModel):
+    email: str
+    name: str
+    password: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_signup_email(cls, value):
+        normalized = value.strip().lower()
+        if not validate_email(normalized):
+            raise ValueError("Invalid email format")
+        return normalized
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value):
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Name is required")
+        return cleaned
+
+    @field_validator("password")
+    @classmethod
+    def validate_signup_password(cls, value):
+        if not validate_password(value):
+            raise ValueError(
+                "Password must be at least 8 characters and include upper, lower, and digit"
+            )
+        return value
 
 
-def encrypt_file():
-    """Encrypt a file using the selected algorithm."""
-    print("\n=== ENCRYPT FILE ===")
-    
-    # Get file path from user
-    file_path = input("Enter file path to encrypt: ").strip()
-    
-    # Validate file exists
-    if not os.path.exists(file_path):
-        print("Error: File not found!")
-        return
-    
-    if not os.path.isfile(file_path):
-        print("Error: Path is not a file!")
-        return
-    
-    # Select algorithm
-    algo_choice = select_algorithm()
-    
-    # Get password
-    password = get_password()
-    
-    # Read file content as binary
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_login_email(cls, value):
+        normalized = value.strip().lower()
+        if not validate_email(normalized):
+            raise ValueError("Invalid email format")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_login_password(cls, value):
+        if not value:
+            raise ValueError("Password is required")
+        return value
+
+
+class DecryptionRecordRequest(BaseModel):
+    encrypted_file_id: str
+    encrypted_file_name: str
+    original_filename: Optional[str] = None
+    file_size: Optional[int] = None
+
+    @field_validator("encrypted_file_id", "encrypted_file_name")
+    @classmethod
+    def validate_required_strings(cls, value):
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Field is required")
+        return cleaned
+
+    @field_validator("original_filename")
+    @classmethod
+    def validate_original_filename(cls, value):
+        if value is None:
+            return None
+        return sanitize_filename(value)
+
+
+def _get_request_client(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _is_local_request(request: Request) -> bool:
+    host = (request.url.hostname or "").lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _is_secure_request(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if forwarded_proto:
+        return forwarded_proto.lower() == "https"
+    return request.url.scheme == "https"
+
+
+def _ensure_secure_auth_transport(request: Request):
+    if CONFIG.REQUIRE_TLS_FOR_AUTH and not _is_local_request(request) and not _is_secure_request(request):
+        raise HTTPException(status_code=401, detail="TLS required for authentication")
+
+
+def _enforce_rate_limit(request: Request, scope: str, limit: int):
+    client_key = f"{scope}:{_get_request_client(request)}"
+    if not consume_rate_limit(client_key, max_requests=limit, window_seconds=CONFIG.RATE_LIMIT_WINDOW_SECONDS):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+
+def _save_session_with_index_repair(session: ServerSession):
     try:
-        with open(file_path, 'rb') as f:
-            data = f.read()
-    except Exception as e:
-        print(f"Error reading file: {e}")
+        session.save()
         return
-    
-    # Generate unique ID for filename
-    unique_id = str(uuid.uuid4())[:8]
-    original_name = Path(file_path).stem
-    output_filename = f"{original_name}_{unique_id}.enc"
-    output_path = os.path.join(STORAGE_DIR, output_filename)
-    
-    # Encrypt based on selected algorithm
+    except OperationFailure as exc:
+        details = str(exc)
+        if "IndexOptionsConflict" not in details and "expires_at_1" not in details:
+            raise
+
+    sessions_collection = get_db()["sessions"]
+    sessions_collection.drop_index("expires_at_1")
+    logger.warning("Dropped conflicting MongoDB index during login flow: expires_at_1")
+    session.save()
+
+
+def _issue_auth_session(user: User, request: Request) -> tuple[str, str]:
+    """Create a new session and return (access_token, refresh_token)."""
+    access_token = generate_token(user.email, token_version=user.token_version)
+    refresh_token = generate_refresh_token(user.email, token_version=user.token_version)
+    user.last_login = datetime.now(timezone.utc)
+    user.reset_login_failures()
+    user.save()
+
+    session = ServerSession(
+        user=user,
+        token_hash=hash_token(access_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=CONFIG.ACCESS_TOKEN_EXPIRE_MINUTES),
+        ip_address=_get_request_client(request),
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    _save_session_with_index_repair(session)
+    return access_token, refresh_token
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
     try:
-        if algo_choice == ALGO_AES_GCM:
-            # AES-GCM encryption
-            salt, nonce, ciphertext = encrypt_aes_gcm(data, password)
-            
-            # Create output: [algo_id (1 byte)] [salt (16 bytes)] [nonce (12 bytes)] [ciphertext]
-            algo_id_bytes = bytes([ALGO_AES_GCM])
-            encrypted_data = algo_id_bytes + salt + nonce + ciphertext
-            
-            algorithm_name = "AES-GCM-256"
-            
-        elif algo_choice == ALGO_AES_CTR:
-            # AES-CTR-128 encryption
-            salt, nonce, ciphertext = encrypt_aes_ctr(data, password)
+        # Atlas mongodb+srv URIs usually handle TLS automatically.
+        # We try explicit TLS settings but provide more robust error handling.
+        connect_args = {
+            "db": CONFIG.MONGO_DB_NAME,
+            "host": CONFIG.MONGO_URI,
+            "serverSelectionTimeoutMS": 5000,
+        }
 
-            algo_id_bytes = bytes([ALGO_AES_CTR])
-            encrypted_data = algo_id_bytes + salt + nonce + ciphertext
-
-            algorithm_name = "AES-CTR-128"
-
-        elif algo_choice == ALGO_CHACHA20:
-            # ChaCha20-Poly1305 encryption
-            salt, nonce, ciphertext = encrypt_chacha20_poly1305(data, password)
-
-            algo_id_bytes = bytes([ALGO_CHACHA20])
-            encrypted_data = algo_id_bytes + salt + nonce + ciphertext
-
-            algorithm_name = "ChaCha20-Poly1305"
-        
-        # Write encrypted file
-        with open(output_path, 'wb') as f:
-            f.write(encrypted_data)
-        
-        print(f"\nEncryption successful!")
-        print(f"Algorithm: {algorithm_name}")
-        print(f"Encrypted file saved to: {output_path}")
-        
-    except Exception as e:
-        print(f"Encryption failed: {e}")
-
-
-def decrypt_file():
-    """Decrypt an encrypted file."""
-    print("\n=== DECRYPT FILE ===")
-    
-    # List encrypted files in storage
-    if not os.path.exists(STORAGE_DIR):
-        print("No encrypted files found.")
-        return
-    
-    files = [f for f in os.listdir(STORAGE_DIR) if f.endswith('.enc')]
-    
-    if not files:
-        print("No encrypted files found.")
-        return
-    
-    # Display list of files
-    print("\nAvailable encrypted files:")
-    for i, filename in enumerate(files, 1):
-        print(f"{i}. {filename}")
-    
-    # Select file
-    try:
-        choice = int(input("\nSelect file number: "))
-        if choice < 1 or choice > len(files):
-            print("Invalid selection.")
-            return
-        selected_file = files[choice - 1]
-    except ValueError:
-        print("Invalid input.")
-        return
-    
-    # Get password
-    password = get_password()
-    
-    # Read encrypted file
-    file_path = os.path.join(STORAGE_DIR, selected_file)
-    try:
-        with open(file_path, 'rb') as f:
-            encrypted_data = f.read()
-    except Exception as e:
-        print(f"Error reading file: {e}")
-        return
-    
-    # Detect algorithm from first byte
-    if len(encrypted_data) < 1:
-        print("Error: Invalid encrypted file.")
-        return
-    
-    algo_id = encrypted_data[0]
-    
-    # Handle new format: [algo_id (1)] [salt (16)] [nonce (var)] [ciphertext]
-    # Handle legacy format: [salt (16)] [nonce (12)] [ciphertext]
-    
-    if algo_id in [ALGO_AES_GCM, ALGO_AES_CTR, ALGO_CHACHA20]:
-        # New format
-        salt = encrypted_data[1:17]  # 16 bytes
-        
-        # Determine nonce size based on algorithm
-        if algo_id == ALGO_AES_GCM:
-            nonce_size = 12
-            nonce_start = 17
-        elif algo_id == ALGO_AES_CTR:
-            nonce_size = 16
-            nonce_start = 17
-        elif algo_id == ALGO_CHACHA20:
-            nonce_size = 12
-            nonce_start = 17
-        
-        nonce = encrypted_data[nonce_start:nonce_start + nonce_size]
-        ciphertext = encrypted_data[nonce_start + nonce_size:]
-    else:
-        # Legacy format (assume AES-GCM)
-        algo_id = ALGO_AES_GCM
-        salt = encrypted_data[0:16]
-        nonce = encrypted_data[16:28]
-        ciphertext = encrypted_data[28:]
-    
-    # Decrypt based on algorithm
-    try:
-        if algo_id == ALGO_AES_GCM:
-            from crypto.aes_gcm import decrypt_aes_gcm
-            plaintext = decrypt_aes_gcm(ciphertext, password, salt, nonce)
-            algorithm_name = "AES-GCM-256"
-        elif algo_id == ALGO_AES_CTR:
-            plaintext = decrypt_aes_ctr(ciphertext, password, salt, nonce)
-            algorithm_name = "AES-CTR-128"
-        elif algo_id == ALGO_CHACHA20:
-            plaintext = decrypt_chacha20_poly1305(ciphertext, password, salt, nonce)
-            algorithm_name = "ChaCha20-Poly1305"
-        
-        # Save decrypted file
-        output_filename = selected_file.replace('.enc', '_decrypted')
-        output_path = os.path.join(DECRYPTED_DIR, output_filename)
-        
-        with open(output_path, 'wb') as f:
-            f.write(plaintext)
-        
-        print(f"\nDecryption successful!")
-        print(f"Algorithm: {algorithm_name}")
-        print(f"Decrypted file saved to: {output_path}")
-        
-    except Exception as e:
-        print(f"Decryption failed! Wrong password or corrupted file.")
-        print(f"Error: {e}")
-
-
-def delete_file():
-    """Delete a file from test_files or decrypted directory."""
-    print("\n=== DELETE FILE ===")
-    
-    print("Select folder:")
-    print("1. test_files")
-    print("2. decrypted")
-    
-    choice = input("Enter choice: ").strip()
-    
-    if choice == '1':
-        folder = TEST_FILES_DIR
-    elif choice == '2':
-        folder = DECRYPTED_DIR
-    else:
-        print("Invalid selection.")
-        return
-    
-    # List files in folder
-    if not os.path.exists(folder):
-        print(f"No files in {folder}.")
-        return
-    
-    files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
-    
-    if not files:
-        print(f"No files in {folder}.")
-        return
-    
-    print(f"\nFiles in {folder}:")
-    for i, filename in enumerate(files, 1):
-        print(f"{i}. {filename}")
-    
-    # Select file
-    try:
-        file_choice = int(input("\nSelect file number to delete: "))
-        if file_choice < 1 or file_choice > len(files):
-            print("Invalid selection.")
-            return
-        selected_file = files[file_choice - 1]
-    except ValueError:
-        print("Invalid input.")
-        return
-    
-    # Confirm deletion
-    confirm = input(f"Are you sure you want to delete '{selected_file}'? (yes/no): ").strip().lower()
-    
-    if confirm == 'yes':
+        # Use certifi for TLS CA if not using system certs
         try:
-            os.remove(os.path.join(folder, selected_file))
-            print(f"File '{selected_file}' deleted successfully.")
+            connect_args["tls"] = True
+            connect_args["tlsCAFile"] = certifi.where()
+            connect(**connect_args)
+            get_db().command("ping")
         except Exception as e:
-            print(f"Error deleting file: {e}")
-    else:
-        print("Deletion cancelled.")
+            logger.warning("DB connection with explicit TLS settings failed: %s. Retrying with defaults.", e)
+            disconnect()
+            # Retry without explicit TLS/CA settings as SRV often handles it
+            connect(db=CONFIG.MONGO_DB_NAME, host=CONFIG.MONGO_URI, serverSelectionTimeoutMS=5000)
+            get_db().command("ping")
+
+        # Remove stale legacy index from older schema versions if it exists.
+        users_collection = get_db()["users"]
+        legacy_index = "encrypted_files.file_id_1"
+        if legacy_index in users_collection.index_information():
+            users_collection.drop_index(legacy_index)
+            logger.warning("Dropped legacy MongoDB index: %s", legacy_index)
+
+        # Ensure sessions TTL index is compatible with current model options.
+        sessions_collection = get_db()["sessions"]
+        session_expiry_index = "expires_at_1"
+        sessions_indexes = sessions_collection.index_information()
+        if session_expiry_index in sessions_indexes:
+            ttl_value = sessions_indexes[session_expiry_index].get("expireAfterSeconds")
+            if ttl_value != 0:
+                sessions_collection.drop_index(session_expiry_index)
+                logger.warning(
+                    "Dropped conflicting MongoDB index: %s (expireAfterSeconds=%s)",
+                    session_expiry_index,
+                    ttl_value,
+                )
+    except Exception as exc:
+        logger.exception("Startup error during DB connection or index repair: %s", exc)
+        print(f"\nCRITICAL: Database connection failed. Error: {exc}")
+        print("Please check your MONGO_URI and IP Whitelist in MongoDB Atlas.\n")
+        raise
+    try:
+        yield
+    finally:
+        try:
+            disconnect()
+        except Exception:
+            logger.warning("Error during DB disconnect on shutdown")
 
 
-def main():
-    """Main application entry point."""
-    # Ensure required directories exist
-    ensure_directories()
+app = FastAPI(title="Crypto Project Backend", lifespan=lifespan)
+
+# Trust X-Forwarded-* headers from exactly TRUSTED_PROXY_COUNT upstream proxies.
+# When 0 (default), no proxy headers are trusted — safe for direct internet exposure.
+# Set TRUSTED_PROXY_COUNT=1 in .env when behind nginx, Caddy, or a cloud load balancer.
+if CONFIG.TRUSTED_PROXY_COUNT > 0:
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CONFIG.CORS_ORIGINS,
+    allow_credentials=CONFIG.CORS_ALLOW_CREDENTIALS,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+)
+
+
+@app.middleware("http")
+async def transport_security_middleware(request: Request, call_next):
+    if CONFIG.FORCE_HTTPS and not _is_local_request(request) and not _is_secure_request(request):
+        return JSONResponse(
+            status_code=426,
+            content={"error": "TLS required", "message": "Use HTTPS (TLS) to access this API."},
+        )
+
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+
+    if CONFIG.FORCE_HTTPS:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+    if CONFIG.ENABLE_HTTP3_HINT:
+        response.headers["Alt-Svc"] = 'h3=":443"; ma=86400'
+
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_, exc: HTTPException):
+    if exc.status_code == 401:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Unauthorized", "message": str(exc.detail) or INVALID_TOKEN_MESSAGE},
+        )
+    if exc.status_code == 403:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Forbidden", "message": str(exc.detail)},
+        )
+    if exc.status_code == 404:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Not found", "message": str(exc.detail)},
+        )
+    if exc.status_code == 429:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Too many requests", "message": str(exc.detail)},
+        )
+    if exc.status_code == 423:
+        return JSONResponse(
+            status_code=423,
+            content={"error": "Locked", "message": str(exc.detail)},
+        )
+    if exc.status_code == 413:
+        return JSONResponse(
+            status_code=413,
+            content={"error": "Payload too large", "message": str(exc.detail)},
+        )
+    if exc.status_code == 409:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "Conflict", "message": str(exc.detail)},
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": "Bad request", "message": str(exc.detail)},
+    )
+
+
+def get_current_user(
+    request: Request,
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
+):
+    _ensure_secure_auth_transport(request)
+
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    token = credentials.credentials
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    session = ServerSession.active_for_token_hash(hash_token(token))
+    if not session:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    user = session.user
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    if payload.get("token_version", 0) != user.token_version:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    return {"user": user, "token": token, "session": session}
+
+
+@app.post("/api/auth/signup")
+async def signup(payload: SignupRequest, request: Request):
+    _ensure_secure_auth_transport(request)
+    _enforce_rate_limit(request, "signup", CONFIG.RATE_LIMIT_SIGNUP)
+
+    if User.objects(email=payload.email).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    user = User(email=payload.email, name=payload.name)
+    user.set_password(payload.password)
+    try:
+        user.save()
+    except NotUniqueError:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    access_token, refresh_token = _issue_auth_session(user, request)
+
+    return JSONResponse(
+        status_code=201,
+        content={
+            "message": "Account created successfully",
+            "token": access_token,
+            "refresh_token": refresh_token,
+            "user": {"email": user.email, "name": user.name},
+        },
+    )
+
+
+@app.post("/api/auth/login")
+async def login(payload: LoginRequest, request: Request):
+    _ensure_secure_auth_transport(request)
+    _enforce_rate_limit(request, "login", CONFIG.RATE_LIMIT_LOGIN)
+
+    user = User.objects(email=payload.email).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if user.is_locked():
+        raise HTTPException(status_code=423, detail="Account is temporarily locked")
+
+    if not user.check_password(payload.password):
+        user.register_failed_login(
+            max_attempts=CONFIG.MAX_LOGIN_ATTEMPTS,
+            lockout_minutes=CONFIG.LOCKOUT_MINUTES,
+        )
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is inactive")
+
+    access_token, refresh_token = _issue_auth_session(user, request)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "message": "Login successful",
+            "token": access_token,
+            "refresh_token": refresh_token,
+            "user": user.to_dict(),
+        },
+    )
+
+
+@app.post("/api/auth/logout")
+async def logout(current: Annotated[dict, Depends(get_current_user)]):
+    current["session"].update(set__is_active=False)
+    return JSONResponse(status_code=200, content={"message": "Logged out successfully"})
+
+
+@app.post("/api/auth/logout-all")
+async def logout_all(current: Annotated[dict, Depends(get_current_user)]):
+    user = current["user"]
+    user.token_version += 1
+    user.save()
+    ServerSession.objects(user=user, is_active=True).update(set__is_active=False)
+    return JSONResponse(status_code=200, content={"message": "Logged out from all devices"})
+
+
+@app.get("/api/auth/profile")
+async def get_profile(current: Annotated[dict, Depends(get_current_user)]):
+    return JSONResponse(status_code=200, content={"user": current["user"].to_dict()})
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+@app.post("/api/auth/refresh")
+async def refresh_access_token(payload: RefreshRequest, request: Request):
+    """Exchange a valid refresh token for a new access token.
+
+    The refresh token is validated, the user's token_version is checked
+    to support forced logout-all, and a fresh access token is issued.
+    The refresh token itself is rotated (one-time-use semantics via
+    token_version; full single-use rotation requires a DB flag which
+    can be added later).
+    """
+    refresh_payload = verify_refresh_token(payload.refresh_token)
+    if not refresh_payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    user = User.objects(email=refresh_payload.get("email")).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    # Honour logout-all: if token_version increased, the refresh token is stale
+    if refresh_payload.get("token_version", 0) != user.token_version:
+        raise HTTPException(status_code=401, detail="Session revoked — please log in again")
+
+    # Issue fresh access + rotated refresh token
+    new_access, new_refresh = _issue_auth_session(user, request)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "message": "Token refreshed",
+            "token": new_access,
+            "refresh_token": new_refresh,
+        },
+    )
+
+
+@app.post("/api/files/upload")
+async def upload_encrypted_file(
+    request: Request,
+    file: Annotated[UploadFile, File(...)],
+    current: Annotated[dict, Depends(get_current_user)],
+    original_name: Annotated[str, Form()] = "encrypted_file.enc",
+    algorithm: Annotated[str, Form()] = "AES-256-GCM",
+):
+    _enforce_rate_limit(request, "upload", CONFIG.RATE_LIMIT_UPLOAD)
+
+    safe_name = sanitize_filename(original_name)
+    if algorithm not in CONFIG.ALLOWED_ALGORITHMS:
+        raise HTTPException(status_code=400, detail="Unsupported algorithm")
+    if not allowed_file(safe_name, CONFIG.ALLOWED_EXTENSIONS):
+        raise HTTPException(status_code=400, detail="Unsupported file extension")
+
+    upload_stream = file.file
+    upload_stream.seek(0, 2)
+    actual_size = upload_stream.tell()
+    upload_stream.seek(0)
+
+    if actual_size <= 0:
+        raise HTTPException(status_code=400, detail="No file selected")
+    if actual_size > CONFIG.MAX_CONTENT_LENGTH:
+        raise HTTPException(status_code=413, detail="File exceeds maximum allowed size")
+
+    stored_file = EncryptedFile(
+        user=current["user"],
+        file_id=str(uuid.uuid4()),
+        original_name=safe_name,
+        algorithm=algorithm,
+        file_size=actual_size,
+    )
+    stored_file.encrypted_data.put(
+        upload_stream,
+        filename=safe_name,
+        content_type=file.content_type or "application/octet-stream",
+    )
+    stored_file.save()
+
+    current["user"].update(
+        inc__total_encrypted_files=1,
+        inc__total_storage_used=actual_size,
+    )
+    current["user"].reload()
+
+    return JSONResponse(
+        status_code=201,
+        content={
+            "message": "File uploaded successfully",
+            "file_id": stored_file.file_id,
+            "file_name": stored_file.original_name,
+            "algorithm": stored_file.algorithm,
+            "file_size": stored_file.file_size,
+        },
+    )
+
+
+@app.get("/api/files/list")
+async def list_encrypted_files(current: Annotated[dict, Depends(get_current_user)]):
+    files = EncryptedFile.objects(user=current["user"]).order_by("-uploaded_at")
+    serialized_files = [
+        {
+            "file_id": file_obj.file_id,
+            "original_name": file_obj.original_name,
+            "algorithm": file_obj.algorithm,
+            "file_size": file_obj.file_size,
+            "uploaded_at": file_obj.uploaded_at.isoformat() if file_obj.uploaded_at else None,
+        }
+        for file_obj in files
+    ]
+
+    current["user"].reload()
+    return JSONResponse(
+        status_code=200,
+        content={
+            "total_files": len(serialized_files),
+            "total_storage_mb": round(current["user"].total_storage_used / (1024 * 1024), 2),
+            "files": serialized_files,
+        },
+    )
+
+
+@app.get("/api/files/download/{file_id}")
+async def download_encrypted_file(file_id: str, current: Annotated[dict, Depends(get_current_user)]):
+    file_obj = EncryptedFile.objects(user=current["user"], file_id=file_id).first()
+    if not file_obj:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    filename = sanitize_filename(file_obj.original_name)
+    return StreamingResponse(
+        BytesIO(file_obj.encrypted_data.read()),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.delete("/api/files/delete/{file_id}")
+async def delete_encrypted_file(file_id: str, current: Annotated[dict, Depends(get_current_user)]):
+    file_obj = EncryptedFile.objects(user=current["user"], file_id=file_id).first()
+    if not file_obj:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    deleted_size = file_obj.file_size
+    file_obj.delete()
     
-    while True:
-        print("\n" + "=" * 40)
-        print("    Encryption Tool")
-        print("=" * 40)
-        print("1. Encrypt File")
-        print("2. Decrypt File")
-        print("3. Delete File")
-        print("4. Exit")
-        
-        choice = input("\nEnter choice: ").strip()
-        
-        if choice == '1':
-            encrypt_file()
-        elif choice == '2':
-            decrypt_file()
-        elif choice == '3':
-            delete_file()
-        elif choice == '4':
-            print("Exiting. Goodbye!")
-            break
-        else:
-            print("Invalid selection. Please enter 1, 2, 3, or 4.")
+    # Safely decrement counters, never allow negative values
+    user = current["user"]
+    new_files_count = max(0, user.total_encrypted_files - 1)
+    new_storage_used = max(0, user.total_storage_used - deleted_size)
+    
+    user.update(
+        set__total_storage_used=new_storage_used,
+        set__total_encrypted_files=new_files_count,
+    )
+    user.reload()
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "message": "File deleted successfully",
+            "total_files": user.total_encrypted_files,
+            "total_storage_mb": round(user.total_storage_used / (1024 * 1024), 2),
+        },
+    )
 
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1].lower() in {"web", "ui", "serve"}:
-        if uvicorn is None:
-            raise RuntimeError("uvicorn is not installed. Install it with: pip install uvicorn")
-        web_app = create_web_app()
-        uvicorn.run(web_app, host="127.0.0.1", port=5000)
-    else:
-        main()
+@app.delete("/api/files/delete-all")
+async def delete_all_files(current: Annotated[dict, Depends(get_current_user)]):
+    files = list(EncryptedFile.objects(user=current["user"]))
+    for file_obj in files:
+        file_obj.delete()
 
+    current["user"].update(set__total_storage_used=0, set__total_encrypted_files=0)
+    current["user"].reload()
+
+    return JSONResponse(
+        status_code=200,
+        content={"message": "All files deleted successfully", "total_files": 0},
+    )
+
+
+@app.post("/api/history/add-record")
+async def add_decryption_record(
+    payload: DecryptionRecordRequest,
+    current: Annotated[dict, Depends(get_current_user)],
+):
+    record = DecryptionHistory(
+        user=current["user"],
+        history_id=str(uuid.uuid4()),
+        encrypted_file_id=payload.encrypted_file_id,
+        encrypted_file_name=sanitize_filename(payload.encrypted_file_name),
+        original_filename=payload.original_filename,
+        file_size=payload.file_size,
+    )
+    record.save()
+
+    return JSONResponse(
+        status_code=201,
+        content={"message": "Decryption record added", "history_id": record.history_id},
+    )
+
+
+@app.get("/api/history/list")
+async def list_decryption_history(current: Annotated[dict, Depends(get_current_user)]):
+    records = DecryptionHistory.objects(user=current["user"]).order_by("-decrypted_at")
+    history = [
+        {
+            "history_id": record.history_id,
+            "encrypted_file_id": record.encrypted_file_id,
+            "encrypted_file_name": record.encrypted_file_name,
+            "original_filename": record.original_filename,
+            "file_size": record.file_size,
+            "decrypted_at": record.decrypted_at.isoformat() if record.decrypted_at else None,
+        }
+        for record in records
+    ]
+    return JSONResponse(status_code=200, content={"total_records": len(history), "history": history})
+
+
+@app.delete("/api/history/clear")
+async def clear_decryption_history(current: Annotated[dict, Depends(get_current_user)]):
+    DecryptionHistory.objects(user=current["user"]).delete()
+    return JSONResponse(
+        status_code=200,
+        content={"message": "Decryption history cleared", "total_records": 0},
+    )
+
+
+@app.get("/api/health")
+async def health_check():
+    try:
+        get_db().command("ping")
+        db_status = "connected"
+        is_healthy = True
+        status_code = 200
+    except Exception:
+        logger.exception("Health check database ping failed")
+        db_status = "disconnected"
+        is_healthy = False
+        status_code = 503
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if is_healthy else "unhealthy",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "database": db_status,
+        },
+    )

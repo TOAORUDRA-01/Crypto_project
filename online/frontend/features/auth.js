@@ -118,12 +118,10 @@ function onLogin() {
 	// Fetch user's server files and history
 	fetchUserData();
 	
-	if (document.getElementById('encOnlineBtn').classList.contains('active')) {
+	if (state.appMode === 'cloud') {
 		document.getElementById('encLoginWall').style.display = 'none';
 		document.getElementById('encMainContent').style.display = 'block';
 		document.getElementById('encFormContent').style.display = 'flex';
-	}
-	if (document.getElementById('decOnlineBtn').classList.contains('active')) {
 		document.getElementById('decLoginWall').style.display = 'none';
 		document.getElementById('decOnlineContent').style.display = 'block';
 		renderFileSelectDropdown();
@@ -149,12 +147,10 @@ async function fetchUserData() {
 function onLogout() {
 	document.getElementById('topbarActions').innerHTML =
 		'<button class="btn btn-ghost" onclick="showAuth(\'login\')">Login</button>' + '<button class="btn btn-primary" onclick="showAuth(\'signup\')">Sign Up</button>';
-	if (document.getElementById('encOnlineBtn').classList.contains('active')) {
+	if (state.appMode === 'cloud') {
 		document.getElementById('encLoginWall').style.display = 'flex';
 		document.getElementById('encMainContent').style.display = 'none';
 		document.getElementById('encFormContent').style.display = 'none';
-	}
-	if (document.getElementById('decOnlineBtn').classList.contains('active')) {
 		document.getElementById('decLoginWall').style.display = 'flex';
 		document.getElementById('decOnlineContent').style.display = 'none';
 		hideOnlineDecControls();

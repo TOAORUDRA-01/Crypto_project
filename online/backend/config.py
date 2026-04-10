@@ -20,9 +20,30 @@ def _to_bool(value, default=False):
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _parse_origins(value: str) -> List[str]:
-    origins = [origin.strip() for origin in value.split(",") if origin.strip()]
-    return origins or ["http://localhost:3000"]
+def _parse_origins(value: str, env: str = "development") -> List[str]:
+    """Parse and validate CORS origins.
+
+    In production, rejects 'null', bare IP addresses, and plain HTTP origins.
+    """
+    import re
+    raw = [origin.strip() for origin in value.split(",") if origin.strip()]
+
+    _bare_ip = re.compile(r"^https?://\d{1,3}(\.\d{1,3}){3}(:\d+)?$")
+
+    if env == "production":
+        cleaned = []
+        for origin in raw:
+            if origin == "null":
+                continue  # never allow null origin in production
+            if _bare_ip.match(origin):
+                continue  # never allow bare IP origins in production
+            if not origin.startswith("https://"):
+                continue  # only HTTPS origins in production
+            cleaned.append(origin)
+        return cleaned or []
+
+    # Development: allow any origin except the literal string 'null'
+    return [o for o in raw if o != "null"] or ["http://localhost:3000"]
 
 
 class Config:
@@ -36,7 +57,13 @@ class Config:
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
     JWT_ISSUER = os.getenv("JWT_ISSUER", "crypto-project-backend")
     JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "crypto-project-clients")
-    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))   # 15 min; was 1440
+    REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+
+    # How many upstream proxies to trust for X-Forwarded-* headers.
+    # Set to 1 when behind exactly one reverse proxy (nginx, Caddy, ALB).
+    # Set to 0 (default) when uvicorn is directly internet-facing.
+    TRUSTED_PROXY_COUNT = int(os.getenv("TRUSTED_PROXY_COUNT", "0"))
 
     TLS_CERT_FILE = os.getenv("TLS_CERT_FILE")
     TLS_KEY_FILE = os.getenv("TLS_KEY_FILE")
@@ -58,8 +85,11 @@ class Config:
     RATE_LIMIT_UPLOAD = int(os.getenv("RATE_LIMIT_UPLOAD", "20"))
     RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 
-    CORS_ORIGINS = _parse_origins(os.getenv("CORS_ORIGINS", "http://localhost:3000"))
-    CORS_ALLOW_CREDENTIALS = _to_bool(os.getenv("CORS_ALLOW_CREDENTIALS"), default=False)
+    CORS_ORIGINS = _parse_origins(
+        os.getenv("CORS_ORIGINS", "http://localhost:3000"),
+        env=os.getenv("APP_ENV", "development"),
+    )
+    CORS_ALLOW_CREDENTIALS = _to_bool(os.getenv("CORS_ALLOW_CREDENTIALS"), default=True)
 
     @classmethod
     def validate(cls):

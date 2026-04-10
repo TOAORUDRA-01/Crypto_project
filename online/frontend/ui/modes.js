@@ -14,14 +14,17 @@ export function setMode(side, mode) {
 		return;
 	}
 
-	document.getElementById(side + 'DesktopBtn').classList.toggle('active', mode === 'desktop');
-	document.getElementById(side + 'OnlineBtn').classList.toggle('active', mode === 'online');
+	const desktopBtn = document.getElementById(side + 'DesktopBtn');
+	const onlineBtn = document.getElementById(side + 'OnlineBtn');
+	if (desktopBtn) desktopBtn.classList.toggle('active', mode === 'desktop');
+	if (onlineBtn) onlineBtn.classList.toggle('active', mode === 'online');
+
 	if (side === 'enc') {
-		const li = !!currentUser();
+		const isLoggedIn = !!currentUser();
 		if (mode === 'online') {
-			document.getElementById('encLoginWall').style.display = li ? 'none' : 'flex';
-			document.getElementById('encMainContent').style.display = li ? 'block' : 'none';
-			document.getElementById('encFormContent').style.display = li ? 'flex' : 'none';
+			document.getElementById('encLoginWall').style.display = isLoggedIn ? 'none' : 'flex';
+			document.getElementById('encMainContent').style.display = isLoggedIn ? 'block' : 'none';
+			document.getElementById('encFormContent').style.display = isLoggedIn ? 'flex' : 'none';
 		} else {
 			document.getElementById('encLoginWall').style.display = 'none';
 			document.getElementById('encMainContent').style.display = 'block';
@@ -30,11 +33,11 @@ export function setMode(side, mode) {
 	} else {
 		document.getElementById('decDesktopPanel').style.display = mode === 'desktop' ? 'block' : 'none';
 		document.getElementById('decOnlinePanel').style.display = mode === 'online' ? 'block' : 'none';
-		const li = !!currentUser();
+		const isLoggedIn = !!currentUser();
 		if (mode === 'online') {
-			document.getElementById('decLoginWall').style.display = li ? 'none' : 'flex';
-			document.getElementById('decOnlineContent').style.display = li ? 'block' : 'none';
-			if (!li) {
+			document.getElementById('decLoginWall').style.display = isLoggedIn ? 'none' : 'flex';
+			document.getElementById('decOnlineContent').style.display = isLoggedIn ? 'block' : 'none';
+			if (!isLoggedIn) {
 				hideOnlineDecControls();
 				setStatus('dec', '', '');
 			} else {
