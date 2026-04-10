@@ -17,7 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from mongoengine import NotUniqueError, connect, disconnect
 from mongoengine.connection import get_db
 from pymongo.errors import OperationFailure
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 
 from .config import get_config
 from .models import DecryptionHistory, EncryptedFile, ServerSession, User
@@ -44,21 +44,24 @@ class SignupRequest(BaseModel):
     name: str
     password: str
 
-    @validator("email")
+    @field_validator("email")
+    @classmethod
     def validate_signup_email(cls, value):
         normalized = value.strip().lower()
         if not validate_email(normalized):
             raise ValueError("Invalid email format")
         return normalized
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, value):
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("Name is required")
         return cleaned
 
-    @validator("password")
+    @field_validator("password")
+    @classmethod
     def validate_signup_password(cls, value):
         if not validate_password(value):
             raise ValueError(
@@ -71,14 +74,16 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-    @validator("email")
+    @field_validator("email")
+    @classmethod
     def validate_login_email(cls, value):
         normalized = value.strip().lower()
         if not validate_email(normalized):
             raise ValueError("Invalid email format")
         return normalized
 
-    @validator("password")
+    @field_validator("password")
+    @classmethod
     def validate_login_password(cls, value):
         if not value:
             raise ValueError("Password is required")
@@ -91,14 +96,16 @@ class DecryptionRecordRequest(BaseModel):
     original_filename: Optional[str] = None
     file_size: Optional[int] = None
 
-    @validator("encrypted_file_id", "encrypted_file_name")
+    @field_validator("encrypted_file_id", "encrypted_file_name")
+    @classmethod
     def validate_required_strings(cls, value):
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("Field is required")
         return cleaned
 
-    @validator("original_filename")
+    @field_validator("original_filename")
+    @classmethod
     def validate_original_filename(cls, value):
         if value is None:
             return None
