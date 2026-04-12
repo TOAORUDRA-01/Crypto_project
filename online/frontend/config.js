@@ -4,10 +4,10 @@
 
 export const API_CONFIG = {
   // Local backend used for development or local cloud emulation.
-  LOCAL_API_BASE_URL: 'http://localhost:8000', // Testing HTTP first
+  LOCAL_API_BASE_URL: 'https://192.168.56.1:5444', // HTTP for simplicity
 
   // Set this to your deployed backend URL for cloud mode.
-  CLOUD_API_BASE_URL: 'http://localhost:8000', // Testing HTTP first
+  CLOUD_API_BASE_URL: 'https://192.168.56.1:5444', // HTTP for simplicity
   
   // Alternatively, use environment variables if available
   // import.meta.env.VITE_API_URL || 'http://localhost:5000'

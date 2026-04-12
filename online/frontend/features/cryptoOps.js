@@ -1,6 +1,7 @@
 import { currentUser, state, isLoggedIn } from '../core/state.js';
 import { fmtDate, fmtSize, genId } from '../core/utils.js';
 import { finishProgress, setProgress, setStatus, showProgress, toast, triggerDownload } from '../core/status.js';
+import { encryptChaCha20Poly1305, decryptChaCha20Poly1305, deriveChaChaKey } from '../core/crypto.js';
 import { renderMgrList } from './manager.js';
 import { clearOnlineFileSelection, renderFileSelectDropdown } from '../ui/selector.js';
 import { clearDecDropSelection, clearEncDropSelection } from '../ui/dropzone.js';
@@ -33,17 +34,42 @@ export async function encryptFile() {
 		const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
 		setProgress('enc', 50);
 		const salt = crypto.getRandomValues(new Uint8Array(16));
-		const iv = crypto.getRandomValues(new Uint8Array(12));
-		const keyLen = algo === 'AES-128-CTR' ? 128 : 256;
-		const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: keyLen }, false, ['encrypt']);
-		setProgress('enc', 70);
-		const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, buf);
+		const iv = algo === 'AES-128-CTR' ? crypto.getRandomValues(new Uint8Array(16)) : crypto.getRandomValues(new Uint8Array(12));
+		let cipher;
+		let algorithmId;
+		if (algo === 'AES-256-GCM') {
+			const key = await crypto.subtle.deriveKey(
+				{ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+				km,
+				{ name: 'AES-GCM', length: 256 },
+				false,
+				['encrypt']
+			);
+			cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, buf);
+			algorithmId = 1;
+		} else if (algo === 'AES-128-CTR') {
+			const key = await crypto.subtle.deriveKey(
+				{ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+				km,
+				{ name: 'AES-CTR', length: 128 },
+				false,
+				['encrypt']
+			);
+			cipher = await crypto.subtle.encrypt({ name: 'AES-CTR', counter: iv, length: 64 }, key, buf);
+			algorithmId = 2;
+		} else if (algo === 'ChaCha20-Poly1305') {
+			const keyBytes = await deriveChaChaKey(pass, salt);
+			cipher = encryptChaCha20Poly1305(new Uint8Array(buf), keyBytes, iv);
+			algorithmId = 3;
+		} else {
+			throw new Error('Unsupported algorithm selected');
+		}
 		setProgress('enc', 90);
-		const out = new Uint8Array(1 + 16 + 12 + cipher.byteLength);
-		out[0] = keyLen === 256 ? 1 : 0;
+		const out = new Uint8Array(1 + 16 + iv.length + cipher.byteLength);
+		out[0] = algorithmId;
 		out.set(salt, 1);
 		out.set(iv, 17);
-		out.set(new Uint8Array(cipher), 29);
+		out.set(new Uint8Array(cipher), 17 + iv.length);
 		const blob = new Blob([out], { type: 'application/octet-stream' });
 		const encName = state.encFile.name + '.enc';
 		const id = genId();
@@ -128,15 +154,52 @@ export async function decryptFile() {
 		const data = new Uint8Array(buf);
 		setProgress('dec', 30);
 		if (data.length < 30) throw new Error('Invalid file');
-		const keyLen = data[0] === 1 ? 256 : 128;
+		const algorithmId = data[0];
 		const salt = data.slice(1, 17);
-		const iv = data.slice(17, 29);
-		const cipher = data.slice(29);
+		let nonceSize = 12;
+		let algorithmName;
+		if (algorithmId === 2) {
+			nonceSize = 16;
+			algorithmName = 'AES-128-CTR';
+		} else if (algorithmId === 3) {
+			nonceSize = 12;
+			algorithmName = 'ChaCha20-Poly1305';
+		} else {
+			nonceSize = 12;
+			algorithmName = 'AES-256-GCM';
+		}
+		const iv = data.slice(17, 17 + nonceSize);
+		const cipher = data.slice(17 + nonceSize);
 		const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
 		setProgress('dec', 55);
-		const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: keyLen }, false, ['decrypt']);
-		setProgress('dec', 75);
-		const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+		let plain;
+		if (algorithmId === 1) {
+			const key = await crypto.subtle.deriveKey(
+				{ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+				km,
+				{ name: 'AES-GCM', length: 256 },
+				false,
+				['decrypt']
+			);
+			setProgress('dec', 75);
+			plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+		} else if (algorithmId === 2) {
+			const key = await crypto.subtle.deriveKey(
+				{ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+				km,
+				{ name: 'AES-CTR', length: 128 },
+				false,
+				['decrypt']
+			);
+			setProgress('dec', 75);
+			plain = await crypto.subtle.decrypt({ name: 'AES-CTR', counter: iv, length: 64 }, key, cipher);
+		} else if (algorithmId === 3) {
+			const keyBytes = await deriveChaChaKey(pass, salt);
+			setProgress('dec', 75);
+			plain = decryptChaCha20Poly1305(cipher, keyBytes, iv);
+		} else {
+			throw new Error('Unsupported encryption algorithm');
+		}
 		setProgress('dec', 90);
 		const origName = sourceName.replace(/\.enc$/, '');
 		const blob = new Blob([plain], { type: 'application/octet-stream' });
