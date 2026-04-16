@@ -1,0 +1,28 @@
+# Minimum Python version required
+# Python >= 3.10 recommended
+# (Tested on Python 3.10 / 3.11 / 3.12)
+
+# Cryptographic library for:
+# - AES-CTR
+# - AES-GCM
+# - ChaCha20-Poly1305
+cryptography>=42.0.0
+
+# Key Derivation Function (Argon2 - memory hard)
+argon2-cffi>=23.0.0
+
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+mongoengine
+pymongo
+pydantic
+certifi
+python-multipart
+python-dotenv
+werkzeug
+PyJWT[crypto]
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+
