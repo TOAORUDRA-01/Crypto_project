@@ -1,5 +1,5 @@
-import { showAuth, switchAuthMode, closeAuth, submitAuth, logout, openProfile, closeProfile } from './features/auth.js';
-import { decryptFile, encryptFile, triggerDownloadFromManager } from './features/cryptoOps.js';
+import { openProfile, closeProfile } from './features/auth.js';
+import { decryptFile, encryptFile, triggerDownloadFromManager, uploadEncryptedToDrive, resetDriveUpload } from './features/cryptoOps.js';
 import { initDropzones } from './ui/dropzone.js';
 import { askDelete, askDeleteAll, closeConfirm, runConfirm, switchMgrTab, renderMgrTab } from './features/manager.js';
 import { setMode } from './ui/modes.js';
@@ -10,6 +10,7 @@ import { state } from './core/state.js';
 import { toast } from './core/status.js';
 import { getAuthToken, setAuthToken, listFiles, getDecryptionHistory } from './core/api.js';
 import { getApiBaseUrl } from './config.js';
+import { initDriveAuth } from './core/drive.js';
 
 function syncThemeUI() {
 	const isDark = state.theme === 'dark';
@@ -38,31 +39,22 @@ btn.innerHTML = show ? EYE_SHUT : EYE_OPEN;
 }
 
 function initOverlayHandlers() {
-document.getElementById('authOverlay').addEventListener('click', (e) => {
-if (e.target.id === 'authOverlay') closeAuth();
-});
 document.getElementById('profileOverlay').addEventListener('click', (e) => {
 if (e.target.id === 'profileOverlay') closeProfile();
 });
 document.getElementById('confirmOverlay').addEventListener('click', (e) => {
 if (e.target.id === 'confirmOverlay') closeConfirm();
 });
-['authName', 'authEmail', 'authPass'].forEach((id) => {
-document.getElementById(id).addEventListener('keydown', (e) => {
-if (e.key === 'Enter') submitAuth();
-});
-});
 }
 
 function exposeGlobals() {
+window._pendingGoogleAction = null;
+window.queueGoogleAction = (action) => {
+	window._pendingGoogleAction = action;
+};
 Object.assign(window, {
 		setAppMode,
 		toggleTheme,
-showAuth,
-switchAuthMode,
-closeAuth,
-submitAuth,
-logout,
 openProfile,
 closeProfile,
 switchTab,
@@ -78,6 +70,7 @@ askDeleteAll,
 closeConfirm,
 runConfirm,
 triggerDownloadFromManager,
+		uploadEncryptedToDrive,
 });
 }
 
@@ -93,17 +86,15 @@ function syncAppModeUI() {
 	localBtn.classList.toggle('active', !isCloud);
 	cloudBtn.classList.toggle('active', isCloud);
 	toggle.classList.toggle('cloud', isCloud);
-	topbarActions.style.display = isCloud ? 'flex' : 'none';
+	topbarActions.style.display = isCloud && state.userProfile ? 'flex' : 'none';
 	if (isCloud && state.userProfile) {
 		const init = state.userProfile.name.charAt(0).toUpperCase();
 		topbarActions.innerHTML = '<div class="user-chip" onclick="openProfile()"><div class="avatar">' + init + '</div>' + state.userProfile.name.split(' ')[0] + '</div>';
 	} else if (isCloud) {
-		topbarActions.innerHTML =
-			'<button class="btn btn-ghost" onclick="showAuth(\'login\')">Login</button>' +
-			'<button class="btn btn-primary" onclick="showAuth(\'signup\')">Sign Up</button>';
+		topbarActions.innerHTML = '';
 	}
-	mgrTabBtn.disabled = !isCloud;
-	mgrTabBtn.title = isCloud ? '' : 'Switch to Cloud mode to manage server files.';
+	mgrTabBtn.disabled = !isCloud || !state.userProfile;
+	mgrTabBtn.title = isCloud && state.userProfile ? '' : 'Server file management requires an account session.';
 
 	if (isCloud) {
 		hint.textContent = 'Cloud mode active: encrypted files can be uploaded to server storage and managed with your account.';
@@ -121,16 +112,13 @@ function setAppMode(mode) {
 	if (mode === 'cloud') {
 		setMode('enc', 'online');
 		setMode('dec', 'online');
-		if (!state.userProfile) {
-			showAuth('login');
-		}
 		toast('Cloud mode enabled.');
 		return;
 	}
 
-	closeAuth();
 	setMode('enc', 'desktop');
 	setMode('dec', 'desktop');
+	resetDriveUpload();
 	if (state.activeTab === 'mgr') {
 		switchTab('enc');
 	}
@@ -178,6 +166,7 @@ async function restoreAuthToken() {
 
 async function init() {
 	await restoreAuthToken();
+window.addEventListener('load', () => initDriveAuth());
 initDropzones();
 initFileDropdownCloseListener();
 initOverlayHandlers();

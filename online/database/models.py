@@ -38,6 +38,9 @@ class User(Document):
     account_locked = BooleanField(default=False)
     locked_until = DateTimeField()
     token_version = IntField(default=0)
+    google_drive_token = StringField()
+    google_drive_folder_id = StringField()
+
 
     meta = {
         "collection": "users",

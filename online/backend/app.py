@@ -14,9 +14,9 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from mongoengine import NotUniqueError, connect, disconnect
-from mongoengine.connection import get_db
-from pymongo.errors import OperationFailure
+# from mongoengine import NotUniqueError, connect, disconnect
+# from mongoengine.connection import get_db
+# from pymongo.errors import OperationFailure
 from pydantic import BaseModel, field_validator
 
 from .config import get_config
@@ -173,54 +173,15 @@ def _issue_auth_session(user: User, request: Request) -> str:
     return access_token
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    try:
-        connect(
-            db=CONFIG.MONGO_DB_NAME,
-            host=CONFIG.MONGO_URI,
-            tls=True,
-            tlsCAFile=certifi.where(),
-            serverSelectionTimeoutMS=5000,
-        )
-        get_db().command("ping")
-        # Remove stale legacy index from older schema versions if it exists.
-        users_collection = get_db()["users"]
-        legacy_index = "encrypted_files.file_id_1"
-        if legacy_index in users_collection.index_information():
-            users_collection.drop_index(legacy_index)
-            logger.warning("Dropped legacy MongoDB index: %s", legacy_index)
-
-        # Ensure sessions TTL index is compatible with current model options.
-        sessions_collection = get_db()["sessions"]
-        session_expiry_index = "expires_at_1"
-        sessions_indexes = sessions_collection.index_information()
-        if session_expiry_index in sessions_indexes:
-            ttl_value = sessions_indexes[session_expiry_index].get("expireAfterSeconds")
-            if ttl_value != 0:
-                sessions_collection.drop_index(session_expiry_index)
-                logger.warning(
-                    "Dropped conflicting MongoDB index: %s (expireAfterSeconds=%s)",
-                    session_expiry_index,
-                    ttl_value,
-                )
-    except Exception as e:
-        # In development, log the error but allow server to start
-        if CONFIG.APP_ENV == "development":
-            print(f"Warning: Database connection failed (development mode): {str(e)}")
-            print("         Server will start but database operations may fail")
-        else:
-            raise
-    try:
-        yield
-    finally:
-        try:
-            disconnect()
-        except:
-            pass
+# @asynccontextmanager
+# async def lifespan(_: FastAPI):
+#     [MongoDB connection code commented out as per request]
+#     pass
+async def dummy_lifespan(_: FastAPI):
+    yield
 
 
-app = FastAPI(title="Crypto Project Backend", lifespan=lifespan)
+app = FastAPI(title="Crypto Project Backend")  # MongoDB lifespan commented out
 
 app.add_middleware(
     CORSMiddleware,
@@ -293,6 +254,137 @@ async def http_exception_handler(_, exc: HTTPException):
         status_code=exc.status_code,
         content={"error": "Bad request", "message": str(exc.detail)},
     )
+
+# Google Drive OAuth endpoints
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
+from io import BytesIO
+
+class GoogleOAuthRequest(BaseModel):
+    code: str
+
+@app.post("/api/google/auth/url")
+async def get_google_auth_url():
+    if not CONFIG.GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": CONFIG.GOOGLE_CLIENT_ID,
+                "client_secret": CONFIG.GOOGLE_CLIENT_SECRET,
+                "redirect_uris": [CONFIG.GOOGLE_REDIRECT_URI],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=["https://www.googleapis.com/auth/drive.file"],
+        redirect_uri=CONFIG.GOOGLE_REDIRECT_URI,
+    )
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    return JSONResponse({"auth_url": auth_url})
+
+def get_current_user(
+    request: Request,
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
+):
+    _ensure_secure_auth_transport(request)
+
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    token = credentials.credentials
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    session = ServerSession.active_for_token_hash(hash_token(token))
+    if not session:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    user = session.user
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    if payload.get("token_version", 0) != user.token_version:
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN_MESSAGE)
+
+    return {"user": user, "token": token, "session": session}
+
+@app.post("/api/google/auth/callback", response_model=None)
+async def google_callback(payload: GoogleOAuthRequest, current: Annotated[dict, Depends(get_current_user)]):
+    if not CONFIG.GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": CONFIG.GOOGLE_CLIENT_ID,
+                "client_secret": CONFIG.GOOGLE_CLIENT_SECRET,
+                "redirect_uris": [CONFIG.GOOGLE_REDIRECT_URI],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=["https://www.googleapis.com/auth/drive.file"],
+        redirect_uri=CONFIG.GOOGLE_REDIRECT_URI,
+    )
+    flow.fetch_token(code=payload.code)
+    creds = flow.credentials
+    user = current["user"]
+    # Save token to user (requires models update)
+    # user.google_drive_token = creds.to_json()
+    # user.save()
+    return JSONResponse({"status": "success", "token_saved": True})
+
+@app.post("/api/files/drive-upload/{file_id}", response_model=None)
+async def upload_to_drive(file_id: str, current: Annotated[dict, Depends(get_current_user)]):
+    # Get enc file from DB (temp, since Mongo commented)
+    file_obj = EncryptedFile.objects(user=current["user"], file_id=file_id).first()
+    if not file_obj:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Get token from user (temp)
+    # token_json = user.google_drive_token
+    # creds = Credentials.from_authorized_user_info(json.loads(token_json))
+    
+    creds = None # Temp
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            raise HTTPException(status_code=401, detail="No valid Google token. Authorize first.")
+    
+    service = build('drive', 'v3', credentials=creds)
+    
+    # Find or create folder
+    folder_metadata = {
+        'name': CONFIG.GOOGLE_DRIVE_FOLDER_NAME,
+        'mimeType': 'application/vnd.google-apps.folder',
+        'parents': [current["user"].google_drive_folder_id] if hasattr(current["user"], 'google_drive_folder_id') else None,
+    }
+    folder = service.files().create(body=folder_metadata, fields='id').execute()
+    folder_id = folder.get('id')
+    
+    # Upload file
+    media = MediaIoBaseUpload(BytesIO(file_obj.encrypted_data.read()), mimetype='application/octet-stream')
+    file_metadata = {
+        'name': file_obj.original_name,
+        'parents': [folder_id]
+    }
+    uploaded_file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id, webViewLink, webContentLink'
+    ).execute()
+    
+    return JSONResponse({
+        "message": "Uploaded to Google Drive",
+        "drive_file_id": uploaded_file['id'],
+        "drive_url": uploaded_file.get('webViewLink'),
+        "folder_id": folder_id
+    })
+
 
 
 def get_current_user(

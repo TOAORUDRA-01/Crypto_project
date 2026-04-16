@@ -83,6 +83,8 @@
 						<div class="progress-label"><span id="encProgressLabel">Encrypting...</span><span id="encProgressPct">0%</span></div>
 						<div class="progress-track"><div class="progress-fill" id="encProgressFill"></div></div>
 					</div>
+					<button class="btn btn-ghost btn-full" id="encEmailBtn" style="display:none;" onclick="emailEncryptedFile()" disabled>Send encrypted file to Gmail</button>
+					<button class="btn btn-primary btn-full" id="encDriveBtn" style="display:none;" onclick="uploadEncryptedToDrive()" disabled>Upload encrypted file to Drive</button>
 					<div class="status-line" id="encStatus">No file selected</div>
 				</div>
 			</div>
@@ -142,6 +144,7 @@
 					<div class="progress-label"><span id="decProgressLabel">Decrypting...</span><span id="decProgressPct">0%</span></div>
 					<div class="progress-track"><div class="progress-fill dec-fill" id="decProgressFill"></div></div>
 				</div>
+				<button class="btn btn-ghost btn-full" id="decEmailBtn" style="display:none;" onclick="emailDecryptedFile()" disabled>Send decrypted file to Gmail</button>
 				<div class="status-line" id="decStatus">No file selected</div>
 			</div>
 
@@ -283,6 +286,7 @@
 
 <div id="toast"></div>
 
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

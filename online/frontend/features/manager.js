@@ -16,10 +16,14 @@ export function switchMgrTab(t) {
 
 export async function renderMgrTab() {
 	const u = currentUser();
-	document.getElementById('mgrLoginWall').style.display = u ? 'none' : 'flex';
+	document.getElementById('mgrLoginWall').style.display = 'none';
 	const mc = document.getElementById('mgrContent');
-	mc.style.display = u ? 'flex' : 'none';
-	if (!u) return;
+	mc.style.display = 'flex';
+	if (!u) {
+		renderMgrList('enc');
+		renderMgrList('dec');
+		return;
+	}
 	
 	// Fetch history from backend if logged in
 	if (isLoggedIn()) {
@@ -37,15 +41,14 @@ export async function renderMgrTab() {
 
 export function renderMgrList(side) {
 	const u = currentUser();
-	if (!u) return;
 	
 	let hist = [];
 	if (side === 'enc') {
 		// Show uploaded encrypted files
-		hist = state.serverFiles || [];
+		hist = u ? state.serverFiles || [] : [];
 	} else {
 		// Show decryption history
-		hist = state.decryptionHistory || [];
+		hist = u ? state.decryptionHistory || [] : [];
 	}
 	
 	const listEl = document.getElementById('mgr' + cap(side) + 'List');

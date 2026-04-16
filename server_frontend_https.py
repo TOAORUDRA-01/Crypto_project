@@ -35,7 +35,7 @@ def main() -> None:
     context.load_cert_chain(certfile=str(cert_file), keyfile=str(key_file))
     server.socket = context.wrap_socket(server.socket, server_side=True)
 
-    print("Frontend HTTPS server running on https://192.168.56.1:8000")
+    print("Frontend HTTPS server running on https://localhost:8000")
     print("Serving directory:", frontend_dir)
     server.serve_forever()
 

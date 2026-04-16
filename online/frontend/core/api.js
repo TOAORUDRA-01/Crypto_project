@@ -4,7 +4,7 @@ import { getApiBaseUrl } from '../config.js';
 let authToken = null;
 
 function extractErrorMessage(errorPayload, fallbackMessage) {
-	if (!errorPayload) return fallbackMessage;
+	if (!errorPayload) return sofallbackMessage;
 
 	if (typeof errorPayload === 'string') return errorPayload;
 
@@ -173,6 +173,35 @@ export async function getDecryptionHistory() {
 
 export async function clearDecryptionHistory() {
 	return await apiCall('/api/history/clear', { method: 'DELETE' });
+}
+
+// Google OAuth helpers
+export async function getGoogleAuthUrl(target = 'gmail') {
+	return await apiCall(`/api/google/auth/url?target=${encodeURIComponent(target)}`);
+}
+
+export async function googleCallback(code, target = 'gmail') {
+	return await apiCall(`/api/google/auth/callback?target=${encodeURIComponent(target)}`, {
+		method: 'POST',
+		body: { code },
+	});
+}
+
+export async function sendToGmail(file, originalName, toEmail, subject, body) {
+	const formData = new FormData();
+	formData.append('file', file, originalName);
+	formData.append('to_email', toEmail);
+	formData.append('subject', subject);
+	formData.append('body', body);
+	return await apiCall('/api/files/email-send', {
+		method: 'POST',
+		body: formData,
+		isFormData: true,
+	});
+}
+
+export async function uploadToDrive(fileId) {
+	return await apiCall(`/api/files/drive-upload/${fileId}`, { method: 'POST' });
 }
 
 // Health check

@@ -91,6 +91,13 @@ class Config:
     )
     CORS_ALLOW_CREDENTIALS = _to_bool(os.getenv("CORS_ALLOW_CREDENTIALS"), default=True)
 
+    # Google Drive OAuth
+    GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+    GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5000/api/google/callback")
+    GOOGLE_DRIVE_FOLDER_NAME = os.getenv("GOOGLE_DRIVE_FOLDER_NAME", "Crypto Cloud Files")
+
+
     @classmethod
     def validate(cls):
         if cls.CORS_ALLOW_CREDENTIALS and "*" in cls.CORS_ORIGINS:

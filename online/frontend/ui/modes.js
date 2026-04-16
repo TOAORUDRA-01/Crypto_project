@@ -1,4 +1,4 @@
-import { currentUser, state } from '../core/state.js';
+import { state } from '../core/state.js';
 import { setStatus, toast } from '../core/status.js';
 import {
 	closeFileDropdown,
@@ -20,34 +20,21 @@ export function setMode(side, mode) {
 	if (onlineBtn) onlineBtn.classList.toggle('active', mode === 'online');
 
 	if (side === 'enc') {
-		const isLoggedIn = !!currentUser();
-		if (mode === 'online') {
-			document.getElementById('encLoginWall').style.display = isLoggedIn ? 'none' : 'flex';
-			document.getElementById('encMainContent').style.display = isLoggedIn ? 'block' : 'none';
-			document.getElementById('encFormContent').style.display = isLoggedIn ? 'flex' : 'none';
-		} else {
-			document.getElementById('encLoginWall').style.display = 'none';
-			document.getElementById('encMainContent').style.display = 'block';
-			document.getElementById('encFormContent').style.display = 'flex';
-		}
+		document.getElementById('encLoginWall').style.display = 'none';
+		document.getElementById('encMainContent').style.display = 'block';
+		document.getElementById('encFormContent').style.display = 'flex';
 	} else {
 		document.getElementById('decDesktopPanel').style.display = mode === 'desktop' ? 'block' : 'none';
 		document.getElementById('decOnlinePanel').style.display = mode === 'online' ? 'block' : 'none';
-		const isLoggedIn = !!currentUser();
 		if (mode === 'online') {
-			document.getElementById('decLoginWall').style.display = isLoggedIn ? 'none' : 'flex';
-			document.getElementById('decOnlineContent').style.display = isLoggedIn ? 'block' : 'none';
-			if (!isLoggedIn) {
-				hideOnlineDecControls();
-				setStatus('dec', '', '');
-			} else {
-				state.selectedOnlineEncId = null;
-				closeFileDropdown();
-				resetFileSelectBox();
-				hideOnlineDecControls();
-				setStatus('dec', '', '');
-				renderFileSelectDropdown();
-			}
+			document.getElementById('decLoginWall').style.display = 'none';
+			document.getElementById('decOnlineContent').style.display = 'block';
+			state.selectedOnlineEncId = null;
+			closeFileDropdown();
+			resetFileSelectBox();
+			hideOnlineDecControls();
+			setStatus('dec', '', '');
+			renderFileSelectDropdown();
 		} else {
 			state.selectedOnlineEncId = null;
 			closeFileDropdown();
