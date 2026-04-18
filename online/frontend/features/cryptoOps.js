@@ -112,9 +112,9 @@ export async function emailEncryptedFile() {
 		const subject = `Encrypted file: ${fileName}`;
 		const body =
 			`Hi,\n\n` +
-			`I've shared an encrypted file with you via Google Drive:\n\n` +
+			`Sharing the file:\n\n` +
 			`${fileName}\n${link}\n\n` +
-			`The file is encrypted with a password — I'll share the password separately.\n\n` +
+			`Open it with our little secret 😉\n\n` +
 			`Sent via Encryptix.`;
 
 		const gmailUrl =
