@@ -1,6 +1,7 @@
-import { currentUser, state } from '../core/state.js';
-import { esc, fmtSize, fmtDate } from '../core/utils.js';
+import { state } from '../core/state.js';
+import { esc, fmtSize } from '../core/utils.js';
 import { setStatus } from '../core/status.js';
+import { hasDriveAccessToken, listSharedDriveItems, downloadDriveFile } from '../core/drive.js';
 
 export function showDesktopDecControls() {
 	document.getElementById('decPassField').style.display = 'flex';
@@ -23,11 +24,13 @@ export function toggleFileDropdown(e) {
 	state.fileDropdownOpen ? closeFileDropdown() : openFileDropdown();
 }
 
-export function openFileDropdown() {
-	renderFileSelectDropdown();
+export async function openFileDropdown() {
+	const dd = document.getElementById('fileSelectDropdown');
+	if (dd) dd.innerHTML = '<p class="file-select-empty">Loading Drive items...</p>';
 	document.getElementById('fileSelectDropdown').style.display = 'block';
 	document.getElementById('fileSelectBox').classList.add('open');
 	state.fileDropdownOpen = true;
+	await refreshDriveItems();
 }
 
 export function closeFileDropdown() {
@@ -49,40 +52,37 @@ export function resetFileSelectBox() {
 export function renderFileSelectDropdown() {
 	const dd = document.getElementById('fileSelectDropdown');
 	if (!dd) return;
-	const u = currentUser();
-	if (!u) {
-		dd.innerHTML = '<p class="file-select-empty">Please login first.</p>';
+	if (!hasDriveAccessToken()) {
+		dd.innerHTML = '<p class="file-select-empty">Connect to Google Drive to load files.</p>';
 		return;
 	}
-	
-	const files = state.serverFiles || [];
-	if (!files.length) {
-		dd.innerHTML = '<p class="file-select-empty">No encrypted files yet. Encrypt a file in Cloud mode first.</p>';
+
+	const items = state.driveItems || [];
+	if (!items.length) {
+		dd.innerHTML = '<p class="file-select-empty">Shared folder is empty.</p>';
 		return;
 	}
-	
-	dd.innerHTML = files
+
+	dd.innerHTML = items
 		.map(
 			(h) => {
-				const origName = h.original_name || h.file_name || 'File';
-				const algo = h.algorithm || 'AES-256-GCM';
-				const size = fmtSize(h.file_size || 0);
-				const date = h.uploaded_at ? new Date(h.uploaded_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Unknown';
+				const name = h.name || 'File';
+				const isFolder = h.mimeType === 'application/vnd.google-apps.folder';
+				const size = isFolder ? 'Folder' : fmtSize(Number(h.size || 0));
+				const date = h.modifiedTime ? new Date(h.modifiedTime).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Unknown';
 				return (
 					'<div class="file-select-option ' +
-					(state.selectedOnlineEncId === h.file_id ? 'selected' : '') +
+					(state.selectedDriveItemId === h.id ? 'selected' : '') +
 					'" onclick="selectOnlineFile(event,\'' +
-					h.file_id +
+					h.id +
 					'\')">' +
 					'<div class="file-select-option-info">' +
 					'<div class="file-select-option-name" title="' +
-					esc(origName) +
+					esc(name) +
 					'">' +
-					esc(origName) +
+					esc(name) +
 					'</div>' +
 					'<div class="file-select-option-meta">' +
-					algo +
-					' · ' +
 					size +
 					' · ' +
 					date +
@@ -96,26 +96,60 @@ export function renderFileSelectDropdown() {
 
 export function selectOnlineFile(e, id) {
 	if (e) e.stopPropagation();
-	state.selectedOnlineEncId = id;
-	const files = state.serverFiles || [];
-	const entry = files.find((h) => h.file_id === id);
+	state.selectedDriveItemId = id;
+	const items = state.driveItems || [];
+	const entry = items.find((h) => h.id === id);
 	if (entry) {
 		const l = document.getElementById('fileSelectLabel');
-		const origName = entry.original_name || entry.file_name || 'File';
-		l.textContent = origName;
+		l.textContent = entry.name || 'File';
 		l.classList.remove('placeholder');
+	}
+	if (entry && entry.mimeType === 'application/vnd.google-apps.folder') {
+		setStatus('dec', 'Folders cannot be decrypted. Please select a file.', 'err');
+		state.selectedDriveItemId = null;
+		resetFileSelectBox();
+		closeFileDropdown();
+		return;
 	}
 	closeFileDropdown();
 	showOnlineDecControls();
-	setStatus('dec', '', '');
-	document.getElementById('decPassword').focus();
+	setStatus('dec', 'Downloading file from Drive...', '');
+	const entryName = entry?.name || 'encrypted.enc';
+	downloadDriveFile(id)
+		.then((blob) => {
+			state.encryptedBlobs[id] = { blob, name: entryName };
+			setStatus('dec', 'File ready to decrypt.', '');
+			document.getElementById('decPassword').focus();
+		})
+		.catch((err) => {
+			setStatus('dec', 'Drive download failed: ' + err.message, 'err');
+			state.selectedDriveItemId = null;
+			resetFileSelectBox();
+			hideOnlineDecControls();
+		});
 }
 
 export function clearOnlineFileSelection() {
-	state.selectedOnlineEncId = null;
+	state.selectedDriveItemId = null;
 	resetFileSelectBox();
 	closeFileDropdown();
 	hideOnlineDecControls();
+}
+
+export async function refreshDriveItems() {
+	setStatus('dec', 'Loading Drive items...', '');
+	try {
+		const items = await listSharedDriveItems();
+		state.driveItems = items;
+		renderFileSelectDropdown();
+		setStatus('dec', '', '');
+		return items;
+	} catch (err) {
+		state.driveItems = [];
+		renderFileSelectDropdown();
+		setStatus('dec', 'Drive access required. Please authorize.', 'err');
+		return [];
+	}
 }
 
 export function initFileDropdownCloseListener() {

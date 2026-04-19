@@ -7,6 +7,8 @@ export const state = {
 	authMode: 'login',
 	pendingAction: null,
 	selectedOnlineEncId: null,
+	selectedDriveItemId: null,
+	driveItems: [],
 	fileDropdownOpen: false,
 	encFile: null,
 	decFile: null,
