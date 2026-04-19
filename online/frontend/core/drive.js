@@ -70,7 +70,7 @@ export async function uploadBlobToDrive(blob, fileName) {
 	form.append('file', blob);
 
 	const res = await fetch(
-		'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',
+		'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink',
 		{
 			method: 'POST',
 			headers: {
@@ -86,5 +86,55 @@ export async function uploadBlobToDrive(blob, fileName) {
 		throw new Error(msg);
 	}
 
+	return data;
+}
+
+/**
+ * Grant a specific user 'reader' access to a Drive file by email.
+ * Uses sendNotificationEmail=false because we send our own Gmail compose.
+ * Returns the created permission object on success.
+ */
+export async function shareDriveFileWithUser(fileId, recipientEmail) {
+	const token = await ensureDriveAccessToken();
+	const res = await fetch(
+		`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/permissions?sendNotificationEmail=false&supportsAllDrives=true`,
+		{
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${token}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				type: 'user',
+				role: 'reader',
+				emailAddress: recipientEmail,
+			}),
+		}
+	);
+
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) {
+		const msg = data && data.error && data.error.message ? data.error.message : 'Failed to share Drive file.';
+		throw new Error(msg);
+	}
+	return data;
+}
+
+/**
+ * Fetch a fresh webViewLink for a Drive file (in case we didn't capture it at upload time).
+ */
+export async function getDriveFileLink(fileId) {
+	const token = await ensureDriveAccessToken();
+	const res = await fetch(
+		`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,webViewLink&supportsAllDrives=true`,
+		{
+			headers: { Authorization: `Bearer ${token}` },
+		}
+	);
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) {
+		const msg = data && data.error && data.error.message ? data.error.message : 'Failed to fetch Drive file info.';
+		throw new Error(msg);
+	}
 	return data;
 }

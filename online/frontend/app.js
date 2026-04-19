@@ -1,5 +1,5 @@
 import { openProfile, closeProfile } from './features/auth.js';
-import { decryptFile, encryptFile, triggerDownloadFromManager, uploadEncryptedToDrive, resetDriveUpload } from './features/cryptoOps.js';
+import { decryptFile, encryptFile, triggerDownloadFromManager, uploadEncryptedToDrive, emailEncryptedFile, resetDriveUpload } from './features/cryptoOps.js';
 import { initDropzones } from './ui/dropzone.js';
 import { askDelete, askDeleteAll, closeConfirm, runConfirm, switchMgrTab, renderMgrTab } from './features/manager.js';
 import { setMode } from './ui/modes.js';
@@ -32,46 +32,43 @@ function toggleTheme() {
 }
 
 function togglePass(id, btn) {
-const inp = document.getElementById(id);
-const show = inp.type === 'password';
-inp.type = show ? 'text' : 'password';
-btn.innerHTML = show ? EYE_SHUT : EYE_OPEN;
+	const inp = document.getElementById(id);
+	const show = inp.type === 'password';
+	inp.type = show ? 'text' : 'password';
+	btn.innerHTML = show ? EYE_SHUT : EYE_OPEN;
 }
 
 function initOverlayHandlers() {
-document.getElementById('profileOverlay').addEventListener('click', (e) => {
-if (e.target.id === 'profileOverlay') closeProfile();
-});
-document.getElementById('confirmOverlay').addEventListener('click', (e) => {
-if (e.target.id === 'confirmOverlay') closeConfirm();
-});
+	document.getElementById('profileOverlay').addEventListener('click', (e) => {
+		if (e.target.id === 'profileOverlay') closeProfile();
+	});
+	document.getElementById('confirmOverlay').addEventListener('click', (e) => {
+		if (e.target.id === 'confirmOverlay') closeConfirm();
+	});
 }
 
 function exposeGlobals() {
-window._pendingGoogleAction = null;
-window.queueGoogleAction = (action) => {
-	window._pendingGoogleAction = action;
-};
-Object.assign(window, {
+	Object.assign(window, {
 		setAppMode,
 		toggleTheme,
-openProfile,
-closeProfile,
-switchTab,
-switchMgrTab,
-setMode,
-togglePass,
-encryptFile,
-decryptFile,
-toggleFileDropdown,
-selectOnlineFile,
-askDelete,
-askDeleteAll,
-closeConfirm,
-runConfirm,
-triggerDownloadFromManager,
+		openProfile,
+		closeProfile,
+		switchTab,
+		switchMgrTab,
+		setMode,
+		togglePass,
+		encryptFile,
+		decryptFile,
+		toggleFileDropdown,
+		selectOnlineFile,
+		askDelete,
+		askDeleteAll,
+		closeConfirm,
+		runConfirm,
+		triggerDownloadFromManager,
 		uploadEncryptedToDrive,
-});
+		emailEncryptedFile,
+	});
 }
 
 function syncAppModeUI() {
@@ -166,11 +163,11 @@ async function restoreAuthToken() {
 
 async function init() {
 	await restoreAuthToken();
-window.addEventListener('load', () => initDriveAuth());
-initDropzones();
-initFileDropdownCloseListener();
-initOverlayHandlers();
-exposeGlobals();
+	window.addEventListener('load', () => initDriveAuth());
+	initDropzones();
+	initFileDropdownCloseListener();
+	initOverlayHandlers();
+	exposeGlobals();
 	const savedTheme = localStorage.getItem('theme');
 	state.theme = savedTheme === 'dark' ? 'dark' : 'light';
 	syncThemeUI();
