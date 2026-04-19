@@ -20,6 +20,7 @@ function wireDropZone(dropId, inputId, cb) {
 	drop.addEventListener('drop', (e) => {
 		e.preventDefault();
 		drop.classList.remove('dragover');
+		const fallbackFiles = e.dataTransfer && e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
 		if (e.dataTransfer.items && e.dataTransfer.items.length) {
 			collectDroppedFiles(e.dataTransfer.items)
 				.then((files) => {
@@ -27,16 +28,16 @@ function wireDropZone(dropId, inputId, cb) {
 						cb(files);
 						return;
 					}
-					if (e.dataTransfer.files && e.dataTransfer.files.length) {
-						cb(e.dataTransfer.files);
+					if (fallbackFiles.length) {
+						cb(fallbackFiles);
 					}
 				})
 				.catch(() => {
-					if (e.dataTransfer.files && e.dataTransfer.files.length) cb(e.dataTransfer.files);
+					if (fallbackFiles.length) cb(fallbackFiles);
 				});
 			return;
 		}
-		if (e.dataTransfer.files && e.dataTransfer.files.length) cb(e.dataTransfer.files);
+		if (fallbackFiles.length) cb(fallbackFiles);
 	});
 }
 
