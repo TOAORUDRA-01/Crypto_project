@@ -125,7 +125,7 @@ body.theme-dark {
 .drop-area.dec-drop:hover, .drop-area.dec-drop.dragover { border-color: var(--dec); background: var(--dec-light); }
 .drop-icon { font-size: 28px; margin-bottom: 6px; display: block; }
 .drop-area p { font-size: 14px; color: var(--muted); font-weight: 500; }
-.drop-actions { display: flex; justify-content: center; margin-top: 10px; }
+.drop-actions { display: flex; justify-content: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .file-name { font-size: 13px; color: var(--muted); font-family: 'DM Mono', monospace; text-align: center; min-height: 18px; }
 
 /* ── Fields ── */

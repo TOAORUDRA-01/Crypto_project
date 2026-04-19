@@ -53,6 +53,7 @@
 						<span class="drop-icon">📂</span>
 						<p>Drag and drop a file or folder here, or click to browse</p>
 						<div class="drop-actions">
+							<button class="btn btn-primary btn-sm" id="encFileBtn" type="button">Choose file</button>
 							<button class="btn btn-ghost btn-sm" id="encFolderBtn" type="button">Choose folder</button>
 						</div>
 						<input type="file" id="encFileInput">
@@ -96,6 +97,9 @@
 					<div class="drop-area dec-drop" id="decDrop">
 						<span class="drop-icon">📂</span>
 						<p>Drag and drop a .enc file here, or click to browse</p>
+						<div class="drop-actions">
+							<button class="btn btn-dec btn-sm" id="decFileBtn" type="button">Choose file</button>
+						</div>
 						<input type="file" id="decFileInput" accept=".enc">
 					</div>
 					<p class="file-name" id="decFileName">No file selected</p>

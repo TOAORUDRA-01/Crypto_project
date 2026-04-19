@@ -139,8 +139,16 @@ export function initDropzones() {
 	wireDropZone('encDrop', 'encFileInput', (files) => {
 		applyEncSelection(files);
 	});
+	const encFileBtn = document.getElementById('encFileBtn');
 	const encFolderBtn = document.getElementById('encFolderBtn');
 	const encFolderInput = document.getElementById('encFolderInput');
+	const encFileInput = document.getElementById('encFileInput');
+	if (encFileBtn && encFileInput) {
+		encFileBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			encFileInput.click();
+		});
+	}
 	if (encFolderBtn && encFolderInput) {
 		encFolderBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
@@ -159,6 +167,14 @@ export function initDropzones() {
 		document.getElementById('decFileName').textContent = f.name + ' (' + fmtSize(f.size) + ')';
 		setStatus('dec', 'File ready', '');
 	});
+	const decFileBtn = document.getElementById('decFileBtn');
+	const decFileInput = document.getElementById('decFileInput');
+	if (decFileBtn && decFileInput) {
+		decFileBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			decFileInput.click();
+		});
+	}
 }
 
 export function clearEncDropSelection() {
