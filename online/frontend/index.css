@@ -120,7 +120,13 @@ body.theme-dark {
 
 /* ── Drop zone ── */
 .drop-area { border: 2px dashed #cbd5e1; border-radius: 10px; padding: 24px 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--input-bg); }
-.drop-area input[type="file"] { display: none; }
+.drop-area input[type="file"] {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	opacity: 0;
+	pointer-events: none;
+}
 .drop-area:hover, .drop-area.dragover { border-color: var(--primary); background: var(--primary-light); }
 .drop-area.dec-drop:hover, .drop-area.dec-drop.dragover { border-color: var(--dec); background: var(--dec-light); }
 .drop-icon { font-size: 28px; margin-bottom: 6px; display: block; }
