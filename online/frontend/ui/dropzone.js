@@ -23,7 +23,13 @@ function wireDropZone(dropId, inputId, cb) {
 		if (e.dataTransfer.items && e.dataTransfer.items.length) {
 			collectDroppedFiles(e.dataTransfer.items)
 				.then((files) => {
-					if (files.length) cb(files);
+					if (files.length) {
+						cb(files);
+						return;
+					}
+					if (e.dataTransfer.files && e.dataTransfer.files.length) {
+						cb(e.dataTransfer.files);
+					}
 				})
 				.catch(() => {
 					if (e.dataTransfer.files && e.dataTransfer.files.length) cb(e.dataTransfer.files);
