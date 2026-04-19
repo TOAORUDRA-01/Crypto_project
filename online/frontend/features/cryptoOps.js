@@ -5,11 +5,12 @@ import { encryptChaCha20Poly1305, decryptChaCha20Poly1305, deriveChaChaKey } fro
 import { renderMgrList } from './manager.js';
 import { clearOnlineFileSelection, renderFileSelectDropdown } from '../ui/selector.js';
 import { clearDecDropSelection, clearEncDropSelection } from '../ui/dropzone.js';
-import { uploadFile, addDecryptionRecord, downloadFile, getDecryptionHistory, sendToGmail, getGoogleAuthUrl } from '../core/api.js';
-import { uploadBlobToDrive } from '../core/drive.js';
+import { uploadFile, addDecryptionRecord, downloadFile, getDecryptionHistory } from '../core/api.js';
+import { uploadBlobToDrive, shareDriveFileWithUser, getDriveFileLink } from '../core/drive.js';
 let encEmailPayload = null;
 let decEmailPayload = null;
 let encDrivePayload = null;
+let encDriveFile = null;
 
 function updateDriveButton(visible, enabled) {
 	const button = document.getElementById('encDriveBtn');
@@ -28,6 +29,30 @@ function updateEncEmailButton(visible, enabled) {
 // Basic email format check — matches backend's validator shape.
 function isValidEmail(value) {
 	return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function getFolderRootName(files) {
+	const first = files[0];
+	if (!first || !first.webkitRelativePath) return 'folder';
+	const parts = first.webkitRelativePath.split('/');
+	return parts[0] || 'folder';
+}
+
+async function zipFolder(files, onProgress) {
+	if (!window.JSZip) {
+		throw new Error('JSZip is required for folder uploads. Please refresh the page.');
+	}
+	const zip = new window.JSZip();
+	for (const file of files) {
+		const path = file.webkitRelativePath || file.name;
+		zip.file(path, file);
+	}
+	const blob = await zip.generateAsync({ type: 'blob' }, (metadata) => {
+		if (onProgress && metadata && typeof metadata.percent === 'number') {
+			onProgress(metadata.percent);
+		}
+	});
+	return { blob, rootName: getFolderRootName(files) };
 }
 
 export function triggerDownloadFromManager(id) {
@@ -150,10 +175,27 @@ export async function encryptFile() {
 	const isOnline = state.appMode === 'cloud';
 	btn.disabled = true;
 	setStatus('enc', '', '');
-	showProgress('enc', 'Reading file...');
-	setProgress('enc', 10);
 	try {
-		const buf = await state.encFile.arrayBuffer();
+		let sourceBlob;
+		let sourceBaseName;
+		if (hasFolder) {
+			showProgress('enc', 'Zipping folder...');
+			setProgress('enc', 5);
+			const zipRes = await zipFolder(state.encFiles, (pct) => {
+				const mapped = 5 + Math.round(pct * 0.2);
+				setProgress('enc', Math.min(mapped, 25));
+			});
+			sourceBlob = zipRes.blob;
+			sourceBaseName = (zipRes.rootName || 'folder') + '.zip';
+			showProgress('enc', 'Reading file...');
+			setProgress('enc', 25);
+		} else {
+			showProgress('enc', 'Reading file...');
+			setProgress('enc', 10);
+			sourceBlob = state.encFile;
+			sourceBaseName = state.encFile.name;
+		}
+		const buf = await sourceBlob.arrayBuffer();
 		setProgress('enc', 30);
 		const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
 		setProgress('enc', 50);
