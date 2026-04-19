@@ -75,6 +75,7 @@ body.theme-dark {
 .app-mode-toggle.cloud button.active { color: var(--mgr); }
 
 .btn { padding: 8px 18px; border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; border: none; }
+.btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 7px; }
 .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
 .btn-ghost:hover { background: var(--bg); }
 .btn-primary { background: var(--primary); color: #fff; }
@@ -124,6 +125,7 @@ body.theme-dark {
 .drop-area.dec-drop:hover, .drop-area.dec-drop.dragover { border-color: var(--dec); background: var(--dec-light); }
 .drop-icon { font-size: 28px; margin-bottom: 6px; display: block; }
 .drop-area p { font-size: 14px; color: var(--muted); font-weight: 500; }
+.drop-actions { display: flex; justify-content: center; margin-top: 10px; }
 .file-name { font-size: 13px; color: var(--muted); font-family: 'DM Mono', monospace; text-align: center; min-height: 18px; }
 
 /* ── Fields ── */

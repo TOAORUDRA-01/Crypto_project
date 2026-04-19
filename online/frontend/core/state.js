@@ -9,6 +9,7 @@ export const state = {
 	selectedOnlineEncId: null,
 	fileDropdownOpen: false,
 	encFile: null,
+	encFiles: null,
 	decFile: null,
 	encryptedBlobs: {},
 	serverFiles: [],

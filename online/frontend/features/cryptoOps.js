@@ -11,6 +11,30 @@ let encEmailPayload = null;
 let decEmailPayload = null;
 let encDrivePayload = null;
 
+function getFolderRootName(files) {
+	const first = files[0];
+	if (!first || !first.webkitRelativePath) return 'folder';
+	const parts = first.webkitRelativePath.split('/');
+	return parts[0] || 'folder';
+}
+
+async function zipFolder(files, onProgress) {
+	if (!window.JSZip) {
+		throw new Error('JSZip is required for folder uploads. Please refresh the page.');
+	}
+	const zip = new window.JSZip();
+	for (const file of files) {
+		const path = file.webkitRelativePath || file.name;
+		zip.file(path, file);
+	}
+	const blob = await zip.generateAsync({ type: 'blob' }, (metadata) => {
+		if (onProgress && metadata && typeof metadata.percent === 'number') {
+			onProgress(metadata.percent);
+		}
+	});
+	return { blob, rootName: getFolderRootName(files) };
+}
+
 function updateDriveButton(visible, enabled) {
 	const button = document.getElementById('encDriveBtn');
 	if (!button) return;
@@ -125,8 +149,9 @@ export async function uploadEncryptedToDrive() {
 }
 
 export async function encryptFile() {
-	if (!state.encFile) {
-		setStatus('enc', 'Please select a file first.', 'err');
+	const hasFolder = Array.isArray(state.encFiles) && state.encFiles.length > 0;
+	if (!state.encFile && !hasFolder) {
+		setStatus('enc', 'Please select a file or folder first.', 'err');
 		return;
 	}
 	const pass = document.getElementById('encPassword').value;
@@ -139,10 +164,27 @@ export async function encryptFile() {
 	const isOnline = state.appMode === 'cloud';
 	btn.disabled = true;
 	setStatus('enc', '', '');
-	showProgress('enc', 'Reading file...');
-	setProgress('enc', 10);
 	try {
-		const buf = await state.encFile.arrayBuffer();
+		let sourceBlob;
+		let sourceBaseName;
+		if (hasFolder) {
+			showProgress('enc', 'Zipping folder...');
+			setProgress('enc', 5);
+			const zipRes = await zipFolder(state.encFiles, (pct) => {
+				const mapped = 5 + Math.round(pct * 0.2);
+				setProgress('enc', Math.min(mapped, 25));
+			});
+			sourceBlob = zipRes.blob;
+			sourceBaseName = (zipRes.rootName || 'folder') + '.zip';
+			showProgress('enc', 'Reading file...');
+			setProgress('enc', 25);
+		} else {
+			showProgress('enc', 'Reading file...');
+			setProgress('enc', 10);
+			sourceBlob = state.encFile;
+			sourceBaseName = state.encFile.name;
+		}
+		const buf = await sourceBlob.arrayBuffer();
 		setProgress('enc', 30);
 		const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
 		setProgress('enc', 50);
@@ -184,7 +226,7 @@ export async function encryptFile() {
 		out.set(iv, 17);
 		out.set(new Uint8Array(cipher), 17 + iv.length);
 		const blob = new Blob([out], { type: 'application/octet-stream' });
-		const encName = state.encFile.name + '.enc';
+		const encName = sourceBaseName + '.enc';
 		const id = genId();
 		state.encryptedBlobs[id] = { blob, name: encName };
 		encEmailPayload = { blob, name: encName };

@@ -56,8 +56,12 @@
 				<div id="encMainContent">
 					<div class="drop-area" id="encDrop">
 						<span class="drop-icon">📂</span>
-						<p>Drag and drop a file here, or click to browse</p>
+						<p>Drag and drop a file or folder here, or click to browse</p>
+						<div class="drop-actions">
+							<button class="btn btn-ghost btn-sm" id="encFolderBtn" type="button">Choose folder</button>
+						</div>
 						<input type="file" id="encFileInput">
+						<input type="file" id="encFolderInput" webkitdirectory directory multiple>
 					</div>
 					<p class="file-name" id="encFileName">No file selected</p>
 				</div>
@@ -287,6 +291,7 @@
 <div id="toast"></div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>
