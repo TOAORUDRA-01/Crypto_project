@@ -1,5 +1,5 @@
 import { openProfile, closeProfile, showAuth, closeAuth, switchAuthMode, submitAuth, logout } from './features/auth.js';
-import { decryptFile, encryptFile, triggerDownloadFromManager, uploadEncryptedToDrive, emailEncryptedFile, resetDriveUpload } from './features/cryptoOps.js';
+import { decryptFile, encryptFile, triggerDownloadFromManager, uploadEncryptedToDrive, emailEncryptedFile, resetDriveUpload } from './features/cryptoOps.cache.js?v=4';
 import { initDropzones } from './ui/dropzone.js';
 import { askDelete, askDeleteAll, closeConfirm, runConfirm, switchMgrTab, renderMgrTab } from './features/manager.js';
 import { setMode } from './ui/modes.js';
