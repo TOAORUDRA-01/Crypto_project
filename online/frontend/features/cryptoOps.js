@@ -47,6 +47,7 @@ function updateEncEmailButton(visible, enabled) {
 function isValidEmail(value) {
 	return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
+// let encDrivePayload = null;
 
 function concatBytes(...chunks) {
 	const total = chunks.reduce((sum, c) => sum + c.length, 0);
