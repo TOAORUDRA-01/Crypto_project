@@ -11,6 +11,7 @@ export const state = {
 	driveItems: [],
 	fileDropdownOpen: false,
 	encFile: null,
+	encFiles: null,
 	decFile: null,
 	encryptedBlobs: {},
 	serverFiles: [],
