@@ -30,6 +30,7 @@ export function setMode(side, mode) {
 			document.getElementById('decLoginWall').style.display = 'none';
 			document.getElementById('decOnlineContent').style.display = 'block';
 			state.selectedOnlineEncId = null;
+			state.selectedDriveItemId = null;
 			closeFileDropdown();
 			resetFileSelectBox();
 			hideOnlineDecControls();
@@ -37,6 +38,7 @@ export function setMode(side, mode) {
 			renderFileSelectDropdown();
 		} else {
 			state.selectedOnlineEncId = null;
+			state.selectedDriveItemId = null;
 			closeFileDropdown();
 			showDesktopDecControls();
 			setStatus('dec', 'No file selected', '');

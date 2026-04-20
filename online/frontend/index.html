@@ -40,6 +40,11 @@
 			<div class="panel active" id="panelEnc">
 				<h2 class="panel-title">Encrypt File</h2>
 
+				<!-- <div class="mode-toggle">
+					<button id="encDesktopBtn" class="active" onclick="setMode('enc','desktop')">Local</button>
+					<button id="encOnlineBtn" onclick="setMode('enc','online')">Cloud</button>
+				</div> -->
+
 				<div id="encLoginWall" class="login-wall" style="display:none">
 					<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
 					<span class="login-wall-title">Login required</span>
@@ -83,8 +88,8 @@
 						<div class="progress-label"><span id="encProgressLabel">Encrypting...</span><span id="encProgressPct">0%</span></div>
 						<div class="progress-track"><div class="progress-fill" id="encProgressFill"></div></div>
 					</div>
+					<button class="btn btn-ghost btn-full" id="encEmailBtn" style="display:none;" onclick="emailEncryptedFile()" disabled>Send encrypted file to Gmail</button>
 					<button class="btn btn-primary btn-full" id="encDriveBtn" style="display:none;" onclick="uploadEncryptedToDrive()" disabled>Upload encrypted file to Drive</button>
-					<button class="btn btn-ghost btn-full" id="encEmailBtn" style="display:none;" onclick="emailEncryptedFile()" disabled>Send via Email (Drive link)</button>
 					<div class="status-line" id="encStatus">No file selected</div>
 				</div>
 			</div>
@@ -92,6 +97,11 @@
 			<!-- ════════ PANEL: DECRYPT ════════ -->
 			<div class="panel" id="panelDec">
 				<h2 class="panel-title dec">Decrypt File</h2>
+
+				<!-- <div class="mode-toggle dec-mode">
+					<button id="decDesktopBtn" class="active" onclick="setMode('dec','desktop')">Local</button>
+					<button id="decOnlineBtn" onclick="setMode('dec','online')">Cloud</button>
+				</div> -->
 
 				<div id="decDesktopPanel">
 					<div class="drop-area dec-drop" id="decDrop">
@@ -142,6 +152,7 @@
 					<div class="progress-label"><span id="decProgressLabel">Decrypting...</span><span id="decProgressPct">0%</span></div>
 					<div class="progress-track"><div class="progress-fill dec-fill" id="decProgressFill"></div></div>
 				</div>
+				<button class="btn btn-ghost btn-full" id="decEmailBtn" style="display:none;" onclick="emailDecryptedFile()" disabled>Send decrypted file to Gmail</button>
 				<div class="status-line" id="decStatus">No file selected</div>
 			</div>
 
