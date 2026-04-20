@@ -3,14 +3,14 @@ import { decryptFile, encryptFile, triggerDownloadFromManager, uploadEncryptedTo
 import { initDropzones } from './ui/dropzone.js';
 import { askDelete, askDeleteAll, closeConfirm, runConfirm, switchMgrTab, renderMgrTab } from './features/manager.js';
 import { setMode } from './ui/modes.js';
-import { initFileDropdownCloseListener, toggleFileDropdown, selectOnlineFile, renderFileSelectDropdown } from './ui/selector.js';
+import { initFileDropdownCloseListener, toggleFileDropdown, selectOnlineFile, renderFileSelectDropdown, refreshDriveItems } from './ui/selector.js';
 import { switchTab } from './ui/tabs.js';
 import { EYE_OPEN, EYE_SHUT } from './core/utils.js';
 import { state } from './core/state.js';
 import { toast } from './core/status.js';
 import { getAuthToken, setAuthToken, listFiles, getDecryptionHistory } from './core/api.js';
 import { getApiBaseUrl } from './config.js';
-import { initDriveAuth } from './core/drive.js';
+import { initDriveAuth, ensureDriveAccessToken } from './core/drive.js';
 
 function syncThemeUI() {
 	const isDark = state.theme === 'dark';
@@ -32,30 +32,29 @@ function toggleTheme() {
 }
 
 function togglePass(id, btn) {
-	const inp = document.getElementById(id);
-	const show = inp.type === 'password';
-	inp.type = show ? 'text' : 'password';
-	btn.innerHTML = show ? EYE_SHUT : EYE_OPEN;
+const inp = document.getElementById(id);
+const show = inp.type === 'password';
+inp.type = show ? 'text' : 'password';
+btn.innerHTML = show ? EYE_SHUT : EYE_OPEN;
 }
 
 function initOverlayHandlers() {
-	document.getElementById('profileOverlay').addEventListener('click', (e) => {
-		if (e.target.id === 'profileOverlay') closeProfile();
-	});
-	document.getElementById('confirmOverlay').addEventListener('click', (e) => {
-		if (e.target.id === 'confirmOverlay') closeConfirm();
-	});
+document.getElementById('profileOverlay').addEventListener('click', (e) => {
+if (e.target.id === 'profileOverlay') closeProfile();
+});
+document.getElementById('confirmOverlay').addEventListener('click', (e) => {
+if (e.target.id === 'confirmOverlay') closeConfirm();
+});
 }
 
 function exposeGlobals() {
-	Object.assign(window, {
+window._pendingGoogleAction = null;
+window.queueGoogleAction = (action) => {
+	window._pendingGoogleAction = action;
+};
+Object.assign(window, {
 		setAppMode,
 		toggleTheme,
-		showAuth,
-		closeAuth,
-		switchAuthMode,
-		submitAuth,
-		logout,
 		openProfile,
 		closeProfile,
 		switchTab,
@@ -73,7 +72,7 @@ function exposeGlobals() {
 		triggerDownloadFromManager,
 		uploadEncryptedToDrive,
 		emailEncryptedFile,
-	});
+});
 }
 
 function syncAppModeUI() {
@@ -95,8 +94,8 @@ function syncAppModeUI() {
 	} else if (isCloud) {
 		topbarActions.innerHTML = '';
 	}
-	mgrTabBtn.disabled = !isCloud || !state.userProfile;
-	mgrTabBtn.title = isCloud && state.userProfile ? '' : 'Server file management requires an account session.';
+	mgrTabBtn.disabled = !isCloud;
+	mgrTabBtn.title = isCloud ? '' : 'Switch to Cloud mode to manage Drive files.';
 
 	if (isCloud) {
 		hint.textContent = 'Cloud mode active: encrypted files can be uploaded to server storage and managed with your account.';
@@ -105,7 +104,7 @@ function syncAppModeUI() {
 	}
 }
 
-function setAppMode(mode) {
+async function setAppMode(mode) {
 	if (mode !== 'local' && mode !== 'cloud') return;
 	state.appMode = mode;
 	localStorage.setItem('app_mode', mode);
@@ -114,7 +113,19 @@ function setAppMode(mode) {
 	if (mode === 'cloud') {
 		setMode('enc', 'online');
 		setMode('dec', 'online');
-		toast('Cloud mode enabled.');
+		toast('Authorizing Google Drive...');
+		try {
+			await ensureDriveAccessToken();
+			await refreshDriveItems();
+			toast('Cloud mode enabled.');
+		} catch (err) {
+			toast('Google Drive auth failed: ' + err.message);
+			state.appMode = 'local';
+			localStorage.setItem('app_mode', 'local');
+			syncAppModeUI();
+			setMode('enc', 'desktop');
+			setMode('dec', 'desktop');
+		}
 		return;
 	}
 
@@ -167,11 +178,12 @@ async function restoreAuthToken() {
 }
 
 async function init() {
-	exposeGlobals();
-	initOverlayHandlers();
+	await restoreAuthToken();
+	window.addEventListener('load', () => initDriveAuth());
 	initDropzones();
 	initFileDropdownCloseListener();
-	window.addEventListener('load', () => initDriveAuth());
+	initOverlayHandlers();
+	exposeGlobals();
 	const savedTheme = localStorage.getItem('theme');
 	state.theme = savedTheme === 'dark' ? 'dark' : 'light';
 	syncThemeUI();
@@ -179,13 +191,6 @@ async function init() {
 	state.appMode = savedMode === 'cloud' ? 'cloud' : 'local';
 	syncAppModeUI();
 	setAppMode(state.appMode);
-	restoreAuthToken().catch(() => {
-		state.userProfile = null;
-		state.authToken = null;
-		state.serverFiles = [];
-		state.decryptionHistory = [];
-		setAuthToken(null);
-	});
 }
 
 init();

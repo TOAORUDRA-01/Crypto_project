@@ -1,36 +1,50 @@
-import { currentUser, state, isLoggedIn } from '../core/state.js';
-import { fmtDate, fmtSize, genId } from '../core/utils.js';
-import { finishProgress, setProgress, setStatus, showProgress, toast, triggerDownload } from '../core/status.js';
+import { state } from '../core/state.js';
+import { genId } from '../core/utils.js';
+import { setStatus, showProgress, setProgress, finishProgress, triggerDownload, toast } from '../core/status.js';
+import { clearEncDropSelection, clearDecDropSelection } from '../ui/dropzone.js';
+import { clearOnlineFileSelection } from '../ui/selector.js';
 import { encryptChaCha20Poly1305, decryptChaCha20Poly1305, deriveChaChaKey } from '../core/crypto.js';
-import { renderMgrList } from './manager.js';
-import { clearOnlineFileSelection, renderFileSelectDropdown } from '../ui/selector.js';
-import { clearDecDropSelection, clearEncDropSelection } from '../ui/dropzone.js';
-import { uploadFile, addDecryptionRecord, downloadFile, getDecryptionHistory } from '../core/api.js';
 import { uploadBlobToDrive, shareDriveFileWithUser, getDriveFileLink } from '../core/drive.js';
+
+const MAGIC = new TextEncoder().encode('ENC1');
+const SALT_LEN = 16;
+const NONCE_LEN = 12;
+const IV_LEN = 16;
+const PBKDF2_ITERS = 100000;
 let encEmailPayload = null;
 let decEmailPayload = null;
 let encDrivePayload = null;
 let encDriveFile = null;
 
-function updateDriveButton(visible, enabled) {
-	const button = document.getElementById('encDriveBtn');
-	if (!button) return;
-	button.style.display = visible ? 'block' : 'none';
-	button.disabled = !enabled;
+const ALGO_IDS = {
+	'AES-256-GCM': 1,
+	'AES-128-CTR': 2,
+	'ChaCha20-Poly1305': 3,
+};
+
+const ALGO_NAMES = {
+	1: 'AES-256-GCM',
+	2: 'AES-128-CTR',
+	3: 'ChaCha20-Poly1305',
+};
+
+let encDrivePayload = null;
+
+function concatBytes(...chunks) {
+	const total = chunks.reduce((sum, c) => sum + c.length, 0);
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		out.set(chunk, offset);
+		offset += chunk.length;
+	}
+	return out;
 }
 
-function updateEncEmailButton(visible, enabled) {
-	const button = document.getElementById('encEmailBtn');
-	if (!button) return;
-	button.style.display = visible ? 'block' : 'none';
-	button.disabled = !enabled;
-}
-
-// Basic email format check — matches backend's validator shape.
-function isValidEmail(value) {
-	return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
+function randomBytes(len) {
+	const out = new Uint8Array(len);
+	crypto.getRandomValues(out);
+	return out;
 function getFolderRootName(files) {
 	const first = files[0];
 	if (!first || !first.webkitRelativePath) return 'folder';
@@ -59,107 +73,134 @@ export function triggerDownloadFromManager(id) {
 	triggerDownload(state.encryptedBlobs, id);
 }
 
-export function resetDriveUpload() {
-	encDrivePayload = null;
-	encDriveFile = null;
-	updateDriveButton(false, false);
-	updateEncEmailButton(false, false);
+async function deriveAesKey(password, salt, bits, algoName) {
+	const material = await crypto.subtle.importKey(
+		'raw',
+		new TextEncoder().encode(password),
+		'PBKDF2',
+		false,
+		['deriveKey']
+	);
+	return crypto.subtle.deriveKey(
+		{ name: 'PBKDF2', salt, iterations: PBKDF2_ITERS, hash: 'SHA-256' },
+		material,
+		{ name: algoName, length: bits },
+		false,
+		['encrypt', 'decrypt']
+	);
 }
 
-export async function uploadEncryptedToDrive() {
-	if (!encDrivePayload) {
-		setStatus('enc', 'Please encrypt a file first.', 'err');
-		return;
-	}
-	updateDriveButton(true, false);
-	setStatus('enc', 'Uploading to Google Drive...', '');
-	try {
-		const data = await uploadBlobToDrive(encDrivePayload.blob, encDrivePayload.name);
-		const fileId = data && data.id ? data.id : null;
-		if (!fileId) throw new Error('Drive did not return a file ID.');
+async function encryptBytes(buffer, password, algo) {
+	const salt = randomBytes(SALT_LEN);
+	const algoId = ALGO_IDS[algo] || ALGO_IDS['AES-256-GCM'];
 
-		encDriveFile = {
-			id: fileId,
-			webViewLink: data.webViewLink || null,
-			name: data.name || encDrivePayload.name,
-		};
-		setStatus('enc', `Uploaded to Drive. Ready to share via email.`, 'ok');
-		toast('Uploaded to Drive successfully.');
-		// Email button becomes available only after Drive upload succeeds.
-		updateEncEmailButton(true, true);
-	} catch (err) {
-		setStatus('enc', 'Drive upload failed: ' + err.message, 'err');
-		toast('Drive upload failed.');
-	} finally {
-		updateDriveButton(true, true);
+	if (algo === 'AES-256-GCM') {
+		const iv = randomBytes(NONCE_LEN);
+		const key = await deriveAesKey(password, salt, 256, 'AES-GCM');
+		const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, buffer);
+		return { algoId, salt, iv, cipher: new Uint8Array(cipher) };
 	}
+
+	if (algo === 'AES-128-CTR') {
+		const iv = randomBytes(IV_LEN);
+		const key = await deriveAesKey(password, salt, 128, 'AES-CTR');
+		const cipher = await crypto.subtle.encrypt({ name: 'AES-CTR', counter: iv, length: 64 }, key, buffer);
+		return { algoId, salt, iv, cipher: new Uint8Array(cipher) };
+	}
+
+	const nonce = randomBytes(NONCE_LEN);
+	const key = await deriveChaChaKey(password, salt);
+	const cipher = encryptChaCha20Poly1305(new Uint8Array(buffer), key, nonce);
+	return { algoId, salt, iv: nonce, cipher };
 }
 
-/**
- * Share the uploaded Drive file with a recipient's Google account and open Gmail
- * compose prefilled with the Drive link. No attachment is sent — the recipient
- * uses the link to access the encrypted file (which still requires the password).
- */
-export async function emailEncryptedFile() {
-	if (!encDriveFile || !encDriveFile.id) {
-		setStatus('enc', 'Please upload the encrypted file to Drive first.', 'err');
-		return;
+async function decryptBytes(payload, password) {
+	if (payload.length < MAGIC.length + 3 + SALT_LEN + NONCE_LEN) {
+		throw new Error('Invalid encrypted file.');
+	}
+	const magic = payload.subarray(0, 4);
+	if (!magic.every((b, i) => b === MAGIC[i])) {
+		throw new Error('Unsupported encrypted format.');
+	}
+	const algoId = payload[4];
+	const saltLen = payload[5];
+	const ivLen = payload[6];
+	const salt = payload.subarray(7, 7 + saltLen);
+	const iv = payload.subarray(7 + saltLen, 7 + saltLen + ivLen);
+	const cipher = payload.subarray(7 + saltLen + ivLen);
+
+	const algo = ALGO_NAMES[algoId] || 'AES-256-GCM';
+	if (algo === 'AES-256-GCM') {
+		const key = await deriveAesKey(password, salt, 256, 'AES-GCM');
+		const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+		return new Uint8Array(plain);
 	}
 
-	const recipient = (prompt('Enter recipient Gmail address:') || '').trim().toLowerCase();
-	if (!recipient) {
-		toast('Email cancelled.');
-		return;
-	}
-	if (!isValidEmail(recipient)) {
-		setStatus('enc', 'Invalid email address.', 'err');
-		return;
+	if (algo === 'AES-128-CTR') {
+		const key = await deriveAesKey(password, salt, 128, 'AES-CTR');
+		const plain = await crypto.subtle.decrypt({ name: 'AES-CTR', counter: iv, length: 64 }, key, cipher);
+		return new Uint8Array(plain);
 	}
 
-	updateEncEmailButton(true, false);
-	setStatus('enc', `Sharing file with ${recipient}...`, '');
+	const key = await deriveChaChaKey(password, salt);
+	return decryptChaCha20Poly1305(cipher, key, iv);
+}
 
-	try {
-		await shareDriveFileWithUser(encDriveFile.id, recipient);
+function buildEncryptedPayload({ algoId, salt, iv, cipher }) {
+	const header = new Uint8Array(7);
+	header.set(MAGIC, 0);
+	header[4] = algoId;
+	header[5] = salt.length;
+	header[6] = iv.length;
+	return concatBytes(header, salt, iv, cipher);
+}
 
-		// Resolve webViewLink if we don't already have one.
-		let link = encDriveFile.webViewLink;
-		if (!link) {
-			const info = await getDriveFileLink(encDriveFile.id);
-			link = info.webViewLink;
-			encDriveFile.webViewLink = link;
-		}
-		if (!link) throw new Error('Could not resolve Drive link.');
+function buildEncFileName(name) {
+	if (!name) return 'file.enc';
+	return name.endsWith('.enc') ? name : `${name}.enc`;
+}
 
-		const fileName = encDriveFile.name;
-		const subject = `Encrypted file: ${fileName}`;
-		const body =
-			`Hi,\n\n` +
-			`I've shared an encrypted file with you via Google Drive:\n\n` +
-			`${fileName}\n${link}\n\n` +
-			`The file is encrypted with a password — I'll share the password separately.\n\n` +
-			`Sent via Encryptix.`;
+function buildDecFileName(name) {
+	if (!name) return 'file';
+	if (name.endsWith('.enc')) return name.slice(0, -4);
+	return name;
+}
 
-		const gmailUrl =
-			`https://mail.google.com/mail/?view=cm&fs=1` +
-			`&to=${encodeURIComponent(recipient)}` +
-			`&su=${encodeURIComponent(subject)}` +
-			`&body=${encodeURIComponent(body)}`;
-
-		window.open(gmailUrl, '_blank', 'noopener,noreferrer');
-		setStatus('enc', `Shared with ${recipient}. Gmail compose opened.`, 'ok');
-		toast('Gmail compose opened with Drive link.');
-	} catch (err) {
-		const msg = (err && err.message) || 'Failed to share file.';
-		// Drive returns a helpful message when the recipient isn't a Google account.
-		setStatus('enc', `Email share failed: ${msg}`, 'err');
-		toast('Email share failed.');
-	} finally {
-		updateEncEmailButton(true, true);
-	}
+function setEncUiState({ showDrive, allowEmail }) {
+	const driveBtn = document.getElementById('encDriveBtn');
+	const emailBtn = document.getElementById('encEmailBtn');
+	if (!driveBtn || !emailBtn) return;
+	driveBtn.style.display = showDrive ? 'block' : 'none';
+	emailBtn.style.display = showDrive ? 'block' : 'none';
+	driveBtn.disabled = !showDrive;
+	emailBtn.disabled = !allowEmail;
 }
 
 export async function encryptFile() {
+	const file = state.encFile;
+	const password = document.getElementById('encPassword').value || '';
+	const algo = document.getElementById('algorithm').value || 'AES-256-GCM';
+	if (!file) return setStatus('enc', 'Select a file first.', 'err');
+	if (!password) return setStatus('enc', 'Enter a password.', 'err');
+
+	setStatus('enc', 'Encrypting...', '');
+	showProgress('enc', 'Encrypting...');
+	setProgress('enc', 8);
+
+	try {
+		const buffer = await file.arrayBuffer();
+		const encrypted = await encryptBytes(buffer, password, algo);
+		const payload = buildEncryptedPayload(encrypted);
+		const name = buildEncFileName(file.name);
+		const blob = new Blob([payload], { type: 'application/octet-stream' });
+
+		setProgress('enc', 80);
+		finishProgress('enc', 'Done');
+
+		if (state.appMode === 'cloud') {
+			encDrivePayload = { blob, name };
+			setEncUiState({ showDrive: true, allowEmail: false });
+			setStatus('enc', 'Encrypted. Ready to upload to Drive.', 'ok');
 	const hasFolder = Array.isArray(state.encFiles) && state.encFiles.length > 0;
 	if (!state.encFile && !hasFolder) {
 		setStatus('enc', 'Please select a file or folder first.', 'err');
@@ -259,151 +300,115 @@ export async function encryptFile() {
 			updateDriveButton(true, true);
 			updateEncEmailButton(false, false);
 		} else {
-			updateDriveButton(false, false);
-			updateEncEmailButton(false, false);
+			const id = genId();
+			state.encryptedBlobs[id] = { blob, name };
 			triggerDownload(state.encryptedBlobs, id);
-			setStatus('enc', 'Encrypted & downloaded: ' + encName, 'ok');
+			setStatus('enc', 'Encrypted and downloaded.', 'ok');
 		}
-
-		finishProgress('enc', 'Done');
-		toast('File encrypted successfully.');
-		document.getElementById('encPassword').value = '';
 		clearEncDropSelection();
-	} catch (e) {
-		document.getElementById('encProgressWrap').classList.remove('visible');
-		setStatus('enc', e.message || 'Encryption failed. Please try again.', 'err');
-		console.error(e);
+	} catch (err) {
+		console.error(err);
+		finishProgress('enc', 'Failed');
+		setStatus('enc', 'Encryption failed.', 'err');
 	}
-	btn.disabled = false;
 }
 
 export async function decryptFile() {
-	const isOnline = state.appMode === 'cloud';
-	const pass = document.getElementById('decPassword').value;
-	if (!pass) {
-		setStatus('dec', 'Please enter the password.', 'err');
-		return;
-	}
-	let sourceBlob;
-	let sourceName;
-	let fileId = null;
-	if (isOnline) {
-		if (!state.selectedOnlineEncId) {
-			setStatus('dec', 'Please select a file to decrypt.', 'err');
-			return;
-		}
+	const password = document.getElementById('decPassword').value || '';
+	if (!password) return setStatus('dec', 'Enter a password.', 'err');
 
-		const stored = state.encryptedBlobs[state.selectedOnlineEncId];
-		if (stored) {
-			sourceBlob = stored.blob;
-			sourceName = stored.name;
-			fileId = state.selectedOnlineEncId;
-		} else {
-			try {
-				setStatus('dec', 'Downloading file from server...', '');
-				sourceBlob = await downloadFile(state.selectedOnlineEncId);
-				sourceName = 'encrypted.enc';
-				fileId = state.selectedOnlineEncId;
-			} catch (err) {
-				setStatus('dec', 'Failed to download file: ' + err.message, 'err');
-				return;
-			}
-		}
+	let fileBlob = null;
+	let name = '';
+	if (state.appMode === 'cloud') {
+		if (!state.selectedDriveItemId) return setStatus('dec', 'Select a file first.', 'err');
+		const cached = state.encryptedBlobs[state.selectedDriveItemId];
+		if (!cached) return setStatus('dec', 'File not downloaded yet.', 'err');
+		fileBlob = cached.blob;
+		name = cached.name;
 	} else {
-		if (!state.decFile) {
-			setStatus('dec', 'Please select a .enc file first.', 'err');
-			return;
-		}
-		if (!state.decFile.name.endsWith('.enc')) {
-			setStatus('dec', 'File must be a .enc file encrypted by Encryptix.', 'err');
-			return;
-		}
-		sourceBlob = state.decFile;
-		sourceName = state.decFile.name;
+		if (!state.decFile) return setStatus('dec', 'Select a file first.', 'err');
+		fileBlob = state.decFile;
+		name = state.decFile.name;
 	}
-	const btn = document.getElementById('decryptBtn');
-	btn.disabled = true;
-	setStatus('dec', '', '');
-	showProgress('dec', 'Reading file...');
+
+	setStatus('dec', 'Decrypting...', '');
+	showProgress('dec', 'Decrypting...');
 	setProgress('dec', 10);
+
 	try {
-		const buf = await sourceBlob.arrayBuffer();
-		const data = new Uint8Array(buf);
-		setProgress('dec', 30);
-		if (data.length < 30) throw new Error('Invalid file');
-		const algorithmId = data[0];
-		const salt = data.slice(1, 17);
-		let nonceSize = 12;
-		let algorithmName;
-		if (algorithmId === 2) {
-			nonceSize = 16;
-			algorithmName = 'AES-128-CTR';
-		} else if (algorithmId === 3) {
-			nonceSize = 12;
-			algorithmName = 'ChaCha20-Poly1305';
-		} else {
-			nonceSize = 12;
-			algorithmName = 'AES-256-GCM';
-		}
-		const iv = data.slice(17, 17 + nonceSize);
-		const cipher = data.slice(17 + nonceSize);
-		const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
-		setProgress('dec', 55);
-		let plain;
-		if (algorithmId === 1) {
-			const key = await crypto.subtle.deriveKey(
-				{ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
-				km,
-				{ name: 'AES-GCM', length: 256 },
-				false,
-				['decrypt']
-			);
-			setProgress('dec', 75);
-			plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
-		} else if (algorithmId === 2) {
-			const key = await crypto.subtle.deriveKey(
-				{ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
-				km,
-				{ name: 'AES-CTR', length: 128 },
-				false,
-				['decrypt']
-			);
-			setProgress('dec', 75);
-			plain = await crypto.subtle.decrypt({ name: 'AES-CTR', counter: iv, length: 64 }, key, cipher);
-		} else if (algorithmId === 3) {
-			const keyBytes = await deriveChaChaKey(pass, salt);
-			setProgress('dec', 75);
-			plain = decryptChaCha20Poly1305(cipher, keyBytes, iv);
-		} else {
-			throw new Error('Unsupported encryption algorithm');
-		}
-		setProgress('dec', 90);
-		const origName = sourceName.replace(/\.enc$/, '');
+		const buffer = await fileBlob.arrayBuffer();
+		const plain = await decryptBytes(new Uint8Array(buffer), password);
+		setProgress('dec', 80);
+		finishProgress('dec', 'Done');
+
+		const outName = buildDecFileName(name);
 		const blob = new Blob([plain], { type: 'application/octet-stream' });
 		const id = genId();
-		triggerDownload({ [id]: { blob, name: origName } }, id);
-
-		if (isLoggedIn()) {
-			try {
-				await addDecryptionRecord(fileId || 'local', sourceName, origName, blob.size);
-			} catch (err) {
-				console.error('Failed to record decryption:', err);
-			}
-		}
-
-		finishProgress('dec', 'Done');
-		setStatus('dec', 'Decrypted & downloaded: ' + origName, 'ok');
-		toast('File decrypted successfully.');
-		document.getElementById('decPassword').value = '';
-		if (isOnline) {
-			clearOnlineFileSelection();
-		} else {
-			clearDecDropSelection();
-		}
-	} catch (e) {
-		document.getElementById('decProgressWrap').classList.remove('visible');
-		setStatus('dec', e.name === 'OperationError' ? 'Wrong password or corrupted file.' : 'Decryption failed. Is this a valid .enc file?', 'err');
-		console.error(e);
+		state.encryptedBlobs[id] = { blob, name: outName };
+		triggerDownload(state.encryptedBlobs, id);
+		setStatus('dec', 'Decrypted and downloaded.', 'ok');
+		clearDecDropSelection();
+		clearOnlineFileSelection();
+	} catch (err) {
+		console.error(err);
+		finishProgress('dec', 'Failed');
+		setStatus('dec', 'Decryption failed. Check your password.', 'err');
 	}
-	btn.disabled = false;
+}
+
+export async function uploadEncryptedToDrive() {
+	if (!encDrivePayload) {
+		toast('Nothing to upload yet.');
+		return;
+	}
+	const driveBtn = document.getElementById('encDriveBtn');
+	if (driveBtn) driveBtn.disabled = true;
+	setStatus('enc', 'Uploading to Drive...', '');
+	try {
+		const data = await uploadBlobToDrive(encDrivePayload.blob, encDrivePayload.name);
+		encDrivePayload.driveId = data?.id || null;
+		setEncUiState({ showDrive: true, allowEmail: !!encDrivePayload.driveId });
+		setStatus('enc', 'Uploaded to Drive.', 'ok');
+	} catch (err) {
+		console.error(err);
+		setEncUiState({ showDrive: true, allowEmail: false });
+		setStatus('enc', 'Drive upload failed.', 'err');
+	} finally {
+		if (driveBtn) driveBtn.disabled = false;
+	}
+}
+
+export async function emailEncryptedFile() {
+	if (!encDrivePayload?.driveId) {
+		toast('Upload to Drive first.');
+		return;
+	}
+	const email = prompt('Enter recipient email');
+	if (!email) return;
+	setStatus('enc', 'Sharing...', '');
+	try {
+		await shareDriveFileWithUser(encDrivePayload.driveId, email);
+		const info = await getDriveFileLink(encDrivePayload.driveId);
+		const link = info?.webViewLink || '';
+		setStatus('enc', `Shared with ${email}.`, 'ok');
+		if (link) {
+			const subject = encodeURIComponent('Encrypted file from Encryptix');
+			const body = encodeURIComponent('Here is the shared file link:\n' + link);
+			const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${subject}&body=${body}`;
+			window.open(gmailUrl, '_blank', 'noopener');
+			toast('Share link: ' + link);
+		}
+	} catch (err) {
+		console.error(err);
+		setStatus('enc', 'Share failed.', 'err');
+	}
+}
+
+export function resetDriveUpload() {
+	encDrivePayload = null;
+	setEncUiState({ showDrive: false, allowEmail: false });
+}
+
+export function triggerDownloadFromManager() {
+	toast('Server downloads are disabled for Drive-only mode.');
 }

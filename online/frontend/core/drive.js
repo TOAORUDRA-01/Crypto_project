@@ -29,6 +29,10 @@ export function getDriveAccessToken() {
 	return accessToken;
 }
 
+export function hasDriveAccessToken() {
+	return !!accessToken;
+}
+
 function requestAccessToken(promptMode) {
 	return new Promise((resolve, reject) => {
 		if (!initDriveAuth()) {
@@ -48,10 +52,19 @@ function requestAccessToken(promptMode) {
 }
 
 export async function ensureDriveAccessToken() {
+	const storedScope = localStorage.getItem('drive_scope');
+	if (storedScope !== GOOGLE_DRIVE_SCOPE) {
+		accessToken = null;
+	}
+	if (accessToken) return accessToken;
 	try {
-		return await requestAccessToken('');
+		const token = await requestAccessToken('');
+		localStorage.setItem('drive_scope', GOOGLE_DRIVE_SCOPE);
+		return token;
 	} catch (err) {
-		return await requestAccessToken('consent');
+		const token = await requestAccessToken('consent');
+		localStorage.setItem('drive_scope', GOOGLE_DRIVE_SCOPE);
+		return token;
 	}
 }
 
@@ -70,7 +83,7 @@ export async function uploadBlobToDrive(blob, fileName) {
 	form.append('file', blob);
 
 	const res = await fetch(
-		'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink',
+		'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',
 		{
 			method: 'POST',
 			headers: {
@@ -89,11 +102,56 @@ export async function uploadBlobToDrive(blob, fileName) {
 	return data;
 }
 
-/**
- * Grant a specific user 'reader' access to a Drive file by email.
- * Uses sendNotificationEmail=false because we send our own Gmail compose.
- * Returns the created permission object on success.
- */
+function buildDriveListUrl(parentId, pageToken) {
+	const params = new URLSearchParams({
+		pageSize: '200',
+		fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)',
+		supportsAllDrives: 'true',
+		includeItemsFromAllDrives: 'true',
+		corpora: 'allDrives',
+	});
+	const parent = parentId || GOOGLE_DRIVE_SHARED_FOLDER_ID;
+	if (parent) {
+		params.set('q', `'${parent}' in parents and trashed=false`);
+	}
+	if (pageToken) {
+		params.set('pageToken', pageToken);
+	}
+	return `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
+}
+
+export async function listSharedDriveItems(parentId) {
+	const token = await ensureDriveAccessToken();
+	const all = [];
+	let pageToken = '';
+	while (true) {
+		const res = await fetch(buildDriveListUrl(parentId, pageToken), {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			const msg = data && data.error && data.error.message ? data.error.message : 'Drive list failed.';
+			throw new Error(msg);
+		}
+		if (Array.isArray(data.files)) all.push(...data.files);
+		if (!data.nextPageToken) break;
+		pageToken = data.nextPageToken;
+	}
+	return all;
+}
+
+export async function downloadDriveFile(fileId) {
+	const token = await ensureDriveAccessToken();
+	const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`;
+	const res = await fetch(url, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) {
+		throw new Error(`Drive download failed: ${res.statusText}`);
+	}
+	return res.blob();
+}
+
 export async function shareDriveFileWithUser(fileId, recipientEmail) {
 	const token = await ensureDriveAccessToken();
 	const res = await fetch(
@@ -120,9 +178,6 @@ export async function shareDriveFileWithUser(fileId, recipientEmail) {
 	return data;
 }
 
-/**
- * Fetch a fresh webViewLink for a Drive file (in case we didn't capture it at upload time).
- */
 export async function getDriveFileLink(fileId) {
 	const token = await ensureDriveAccessToken();
 	const res = await fetch(
@@ -137,4 +192,19 @@ export async function getDriveFileLink(fileId) {
 		throw new Error(msg);
 	}
 	return data;
+}
+
+export async function deleteDriveFile(fileId) {
+	const token = await ensureDriveAccessToken();
+	const res = await fetch(
+		`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`,
+		{
+			method: 'DELETE',
+			headers: { Authorization: `Bearer ${token}` },
+		}
+	);
+	if (!res.ok) {
+		throw new Error(`Drive delete failed: ${res.statusText}`);
+	}
+	return true
 }

@@ -15,7 +15,7 @@ export const API_CONFIG = {
 
 export const GOOGLE_OAUTH_CLIENT_ID = '786706856532-cm1qioi5lg30e0o1chva2dotduo8h2f8.apps.googleusercontent.com';
 export const GOOGLE_DRIVE_SHARED_FOLDER_ID = '13ajKe-vCHB8Z2ERhS2lPNjWD8uBr5t11';
-export const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+export const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
 
 export function getApiBaseUrl() {
   const mode = localStorage.getItem('app_mode') === 'cloud' ? 'cloud' : 'local';
