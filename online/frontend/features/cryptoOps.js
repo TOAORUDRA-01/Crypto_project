@@ -28,7 +28,7 @@ const ALGO_NAMES = {
 	3: 'ChaCha20-Poly1305',
 };
 
-let encDrivePayload = null;
+// let encDrivePayload = null;
 
 function concatBytes(...chunks) {
 	const total = chunks.reduce((sum, c) => sum + c.length, 0);
