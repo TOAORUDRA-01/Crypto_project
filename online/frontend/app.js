@@ -55,6 +55,11 @@ window.queueGoogleAction = (action) => {
 Object.assign(window, {
 		setAppMode,
 		toggleTheme,
+		showAuth,
+		closeAuth,
+		switchAuthMode,
+		submitAuth,
+		logout,
 		openProfile,
 		closeProfile,
 		switchTab,
@@ -178,12 +183,11 @@ async function restoreAuthToken() {
 }
 
 async function init() {
-	await restoreAuthToken();
-	window.addEventListener('load', () => initDriveAuth());
+	exposeGlobals();
+	initOverlayHandlers();
 	initDropzones();
 	initFileDropdownCloseListener();
-	initOverlayHandlers();
-	exposeGlobals();
+	window.addEventListener('load', () => initDriveAuth());
 	const savedTheme = localStorage.getItem('theme');
 	state.theme = savedTheme === 'dark' ? 'dark' : 'light';
 	syncThemeUI();
@@ -191,6 +195,13 @@ async function init() {
 	state.appMode = savedMode === 'cloud' ? 'cloud' : 'local';
 	syncAppModeUI();
 	setAppMode(state.appMode);
+	restoreAuthToken().catch(() => {
+		state.userProfile = null;
+		state.authToken = null;
+		state.serverFiles = [];
+		state.decryptionHistory = [];
+		setAuthToken(null);
+	});
 }
 
 init();
