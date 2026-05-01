@@ -74,7 +74,7 @@ class Config:
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/crypto_project")
     MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "crypto_project")
 
-    MAX_CONTENT_LENGTH = int(os.getenv("MAX_FILE_SIZE", str(50 * 1024 * 1024)))
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_FILE_SIZE", str(1024 * 1024 * 1024)))
     ALLOWED_EXTENSIONS = {"enc"}
     ALLOWED_ALGORITHMS = {"AES-256-GCM", "AES-128-CTR", "ChaCha20-Poly1305"}
 
